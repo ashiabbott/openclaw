@@ -28,6 +28,13 @@ export type SlackStreamSession = {
   threadTs: string;
   /** True once stop() has been called. */
   stopped: boolean;
+  /**
+   * Accumulated plain-text content that has been appended to this stream.
+   * Updated by {@link appendSlackStream}.  Used to reconstruct the full
+   * response when {@link stopSlackStream} fails so a fallback delivery
+   * can be attempted via the normal chat API.
+   */
+  accumulatedText: string;
 };
 
 export type StartSlackStreamParams = {
@@ -94,12 +101,14 @@ export async function startSlackStream(
     channel,
     threadTs,
     stopped: false,
+    accumulatedText: "",
   };
 
   // If initial text is provided, send it as the first append which will
   // trigger the ChatStreamer to call chat.startStream under the hood.
   if (text) {
     await streamer.append({ markdown_text: text });
+    session.accumulatedText = text;
     logVerbose(`slack-stream: appended initial text (${text.length} chars)`);
   }
 
@@ -122,6 +131,7 @@ export async function appendSlackStream(params: AppendSlackStreamParams): Promis
   }
 
   await session.streamer.append({ markdown_text: text });
+  session.accumulatedText += text;
   logVerbose(`slack-stream: appended ${text.length} chars`);
 }
 
@@ -140,6 +150,11 @@ export async function stopSlackStream(params: StopSlackStreamParams): Promise<vo
   }
 
   session.stopped = true;
+
+  // Accumulate any final text being appended before the stop
+  if (text) {
+    session.accumulatedText += text;
+  }
 
   logVerbose(
     `slack-stream: stopping stream in ${session.channel} thread=${session.threadTs}${

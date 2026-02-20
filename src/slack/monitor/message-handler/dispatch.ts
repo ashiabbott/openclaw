@@ -402,7 +402,30 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     try {
       await stopSlackStream({ session: finalStream });
     } catch (err) {
-      runtime.error?.(danger(`slack-stream: failed to stop stream: ${String(err)}`));
+      runtime.error?.(
+        danger(
+          `slack-stream: failed to stop stream: ${String(err)}, attempting fallback delivery`,
+        ),
+      );
+      // When stopSlackStream fails, the accumulated text is lost if we don't fall back
+      // to a normal delivery. Since the streaming message never finalized, it may appear
+      // as incomplete to the user. Deliver the accumulated text as a normal message
+      // to the same thread to ensure the response reaches the user.
+      if (finalStream.accumulatedText && finalStream.threadTs) {
+        try {
+          const fallbackPayload: ReplyPayload = {
+            text: finalStream.accumulatedText,
+          };
+          await deliverNormally(fallbackPayload, finalStream.threadTs);
+          runtime.log?.(
+            `slack-stream: fallback delivery succeeded to thread ${finalStream.threadTs}`,
+          );
+        } catch (fallbackErr) {
+          runtime.error?.(
+            danger(`slack-stream: fallback delivery also failed: ${String(fallbackErr)}`),
+          );
+        }
+      }
     }
   }
 
