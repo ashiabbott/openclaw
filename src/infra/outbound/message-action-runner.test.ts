@@ -400,7 +400,7 @@ describe("runMessageAction context isolation", () => {
 });
 
 describe("runMessageAction mediaLocalRoots threading", () => {
-  // Spy plugin for channel "imessage" � phone number targets bypass directory lookup,
+  // Spy plugin for channel "imessage" — phone-number targets bypass directory lookup,
   // making it easy to test without a real Telegram/Slack runtime.
   let capturedMediaLocalRoots: readonly string[] | undefined;
 
