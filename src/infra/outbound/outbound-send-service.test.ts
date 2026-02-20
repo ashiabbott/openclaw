@@ -4,10 +4,15 @@ const mocks = vi.hoisted(() => ({
   dispatchChannelMessageAction: vi.fn(),
   sendMessage: vi.fn(),
   sendPoll: vi.fn(),
+  getAgentScopedMediaLocalRoots: vi.fn(() => ["/tmp/.openclaw/workspace-work"]),
 }));
 
 vi.mock("../../channels/plugins/message-actions.js", () => ({
   dispatchChannelMessageAction: (...args: unknown[]) => mocks.dispatchChannelMessageAction(...args),
+}));
+
+vi.mock("../../media/local-roots.js", () => ({
+  getAgentScopedMediaLocalRoots: (...args: unknown[]) => mocks.getAgentScopedMediaLocalRoots(...args),
 }));
 
 vi.mock("./message.js", () => ({
@@ -22,6 +27,8 @@ describe("executeSendAction", () => {
     mocks.dispatchChannelMessageAction.mockReset();
     mocks.sendMessage.mockReset();
     mocks.sendPoll.mockReset();
+    mocks.getAgentScopedMediaLocalRoots.mockReset();
+    mocks.getAgentScopedMediaLocalRoots.mockReturnValue(["/tmp/.openclaw/workspace-work"]);
   });
 
   it("forwards ctx.agentId to sendMessage on core outbound path", async () => {
@@ -51,6 +58,73 @@ describe("executeSendAction", () => {
         channel: "discord",
         to: "channel:123",
         content: "hello",
+      }),
+    );
+  });
+
+  it("passes agent-scoped mediaLocalRoots to plugin send action dispatch", async () => {
+    mocks.dispatchChannelMessageAction.mockResolvedValue({
+      ok: true,
+      value: { messageId: "send-plugin" },
+      continuePrompt: "",
+      output: "",
+      sessionId: "s1",
+      model: "gpt-5.2",
+      usage: {},
+    });
+
+    await executeSendAction({
+      ctx: {
+        cfg: {},
+        channel: "telegram",
+        params: { media: "/tmp/workspace-work/output/file.png" },
+        agentId: "work",
+        dryRun: false,
+      },
+      to: "chat:123",
+      message: "hello",
+      mediaUrl: "/tmp/workspace-work/output/file.png",
+    });
+
+    expect(mocks.dispatchChannelMessageAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        action: "send",
+        mediaLocalRoots: expect.arrayContaining([expect.stringMatching(/workspace-work$/)]),
+      }),
+    );
+  });
+
+  it("passes agent-scoped mediaLocalRoots to plugin send action", async () => {
+    mocks.dispatchChannelMessageAction.mockResolvedValue({
+      ok: true,
+      value: { messageId: "plugin-message" },
+      continuePrompt: "",
+      output: "",
+      sessionId: "s1",
+      model: "gpt-5.2",
+      usage: {},
+    });
+
+    await executeSendAction({
+      ctx: {
+        cfg: {},
+        channel: "telegram",
+        params: { media: "/tmp/.openclaw/workspace-work/out/file.png" },
+        agentId: "work",
+        dryRun: false,
+      },
+      to: "telegram:123",
+      message: "",
+      mediaUrl: "/tmp/.openclaw/workspace-work/out/file.png",
+    });
+
+    expect(mocks.getAgentScopedMediaLocalRoots).toHaveBeenCalledWith({}, "work");
+    expect(mocks.dispatchChannelMessageAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        action: "send",
+        mediaLocalRoots: ["/tmp/.openclaw/workspace-work"],
       }),
     );
   });

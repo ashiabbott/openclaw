@@ -2,6 +2,7 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { dispatchChannelMessageAction } from "../../channels/plugins/message-actions.js";
 import type { ChannelId, ChannelThreadingToolContext } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import { appendAssistantMessageToSessionTranscript } from "../../config/sessions.js";
 import type { GatewayClientMode, GatewayClientName } from "../../utils/message-channel.js";
 import { throwIfAborted } from "./abort.js";
@@ -59,6 +60,10 @@ async function tryHandleWithPluginAction(params: {
     action: params.action,
     cfg: params.ctx.cfg,
     params: params.ctx.params,
+    mediaLocalRoots: getAgentScopedMediaLocalRoots(
+      params.ctx.cfg,
+      params.ctx.agentId ?? params.ctx.mirror?.agentId,
+    ),
     accountId: params.ctx.accountId ?? undefined,
     gateway: params.ctx.gateway,
     toolContext: params.ctx.toolContext,

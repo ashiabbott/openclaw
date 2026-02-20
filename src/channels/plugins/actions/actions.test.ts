@@ -413,6 +413,7 @@ describe("telegramMessageActions", () => {
         asVoice: true,
       }),
       cfg,
+      { mediaLocalRoots: undefined },
     );
   });
 
@@ -439,6 +440,33 @@ describe("telegramMessageActions", () => {
         silent: true,
       }),
       cfg,
+      { mediaLocalRoots: undefined },
+    );
+  });
+
+  it("passes mediaLocalRoots from action context into telegram send handler", async () => {
+    const cfg = telegramCfg();
+
+    await telegramMessageActions.handleAction?.({
+      channel: "telegram",
+      action: "send",
+      params: {
+        to: "789",
+        media: "/tmp/.openclaw/workspace-work/output/plot.png",
+      },
+      cfg,
+      accountId: undefined,
+      mediaLocalRoots: ["/tmp/.openclaw/workspace-work"],
+    });
+
+    expect(handleTelegramAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "sendMessage",
+        to: "789",
+        mediaUrl: "/tmp/.openclaw/workspace-work/output/plot.png",
+      }),
+      cfg,
+      { mediaLocalRoots: ["/tmp/.openclaw/workspace-work"] },
     );
   });
 

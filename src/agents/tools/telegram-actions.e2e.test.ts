@@ -267,6 +267,35 @@ describe("handleTelegramAction", () => {
     );
   });
 
+  it("threads mediaLocalRoots to sendMessageTelegram when provided", async () => {
+    const cfg = {
+      channels: { telegram: { botToken: "tok" } },
+    } as OpenClawConfig;
+
+    const mediaLocalRoots = ["/tmp/workspace-work"];
+
+    await handleTelegramAction(
+      {
+        action: "sendMessage",
+        to: "123456",
+        content: "Check this file!",
+        mediaUrl: "/tmp/workspace-work/output/file.png",
+      },
+      cfg,
+      { mediaLocalRoots },
+    );
+
+    expect(sendMessageTelegram).toHaveBeenCalledWith(
+      "123456",
+      "Check this file!",
+      expect.objectContaining({
+        token: "tok",
+        mediaUrl: "/tmp/workspace-work/output/file.png",
+        mediaLocalRoots,
+      }),
+    );
+  });
+
   it("passes quoteText when provided", async () => {
     const cfg = {
       channels: { telegram: { botToken: "tok" } },

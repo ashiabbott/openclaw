@@ -13,6 +13,7 @@ import type {
   ChannelThreadingToolContext,
 } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
@@ -649,7 +650,7 @@ async function handlePollAction(ctx: ResolvedActionContext): Promise<MessageActi
 }
 
 async function handlePluginAction(ctx: ResolvedActionContext): Promise<MessageActionRunResult> {
-  const { cfg, params, channel, accountId, dryRun, gateway, input, abortSignal } = ctx;
+  const { cfg, params, channel, accountId, dryRun, gateway, input, abortSignal, agentId } = ctx;
   throwIfAborted(abortSignal);
   const action = input.action as Exclude<ChannelMessageActionName, "send" | "poll" | "broadcast">;
   if (dryRun) {
@@ -668,6 +669,7 @@ async function handlePluginAction(ctx: ResolvedActionContext): Promise<MessageAc
     action,
     cfg,
     params,
+    mediaLocalRoots: getAgentScopedMediaLocalRoots(cfg, agentId),
     accountId: accountId ?? undefined,
     requesterSenderId: input.requesterSenderId ?? undefined,
     gateway,

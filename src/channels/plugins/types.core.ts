@@ -305,6 +305,8 @@ export type ChannelMessageActionContext = {
   action: ChannelMessageActionName;
   cfg: OpenClawConfig;
   params: Record<string, unknown>;
+  /** Allowed local media roots for loading local filePath media (agent-scoped when available). */
+  mediaLocalRoots?: readonly string[];
   accountId?: string | null;
   /**
    * Trusted sender id from inbound context. This is server-injected and must
