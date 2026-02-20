@@ -12,7 +12,6 @@ import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { createIMessageTestPlugin } from "../../test-utils/imessage-test-plugin.js";
 import { createTempHomeEnv } from "../../test-utils/temp-home.js";
-import { sendMessageTelegram } from "../../telegram/send.js";
 import { loadWebMedia } from "../../web/media.js";
 import { runMessageAction } from "./message-action-runner.js";
 
@@ -21,16 +20,6 @@ vi.mock("../../web/media.js", async () => {
   return {
     ...actual,
     loadWebMedia: vi.fn(actual.loadWebMedia),
-  };
-});
-
-vi.mock("../../telegram/send.js", async () => {
-  const actual = await vi.importActual<typeof import("../../telegram/send.js")>(
-    "../../telegram/send.js",
-  );
-  return {
-    ...actual,
-    sendMessageTelegram: vi.fn(async () => ({ messageId: "1", chatId: "1" })),
   };
 });
 
@@ -408,43 +397,76 @@ describe("runMessageAction context isolation", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 
+});
+
+describe("runMessageAction mediaLocalRoots threading", () => {
+  // Spy plugin for channel "imessage" � phone number targets bypass directory lookup,
+  // making it easy to test without a real Telegram/Slack runtime.
+  let capturedMediaLocalRoots: readonly string[] | undefined;
+
+  const spyPlugin: ChannelPlugin = {
+    id: "imessage",
+    meta: {
+      id: "imessage",
+      label: "iMessage spy",
+      selectionLabel: "iMessage spy",
+      docsPath: "/channels/imessage",
+      blurb: "spy plugin for mediaLocalRoots regression test",
+    },
+    capabilities: { chatTypes: ["direct"], media: true },
+    config: {
+      listAccountIds: () => ["default"],
+      resolveAccount: () => ({ enabled: true, cliPath: "/fake/imsg" }),
+      isConfigured: () => true,
+    },
+    actions: {
+      listActions: () => ["send"],
+      supportsAction: ({ action }) => action === "send",
+      handleAction: async (ctx) => {
+        capturedMediaLocalRoots = ctx.mediaLocalRoots;
+        return jsonResult({ ok: true });
+      },
+    },
+  };
+
+  beforeEach(() => {
+    capturedMediaLocalRoots = undefined;
+    setActivePluginRegistry(
+      createTestRegistry([{ pluginId: "imessage", source: "test", plugin: spyPlugin }]),
+    );
+  });
+
+  afterEach(() => {
+    setActivePluginRegistry(createTestRegistry([]));
+  });
+
   it("passes agent-scoped mediaLocalRoots into plugin send", async () => {
     const home = await createTempHomeEnv("msg-media-roots-");
     try {
-      vi.mocked(sendMessageTelegram).mockClear();
-
+      const agentId = "leon";
+      const stateDir = process.env.OPENCLAW_STATE_DIR!;
+      const workspaceDir = path.join(stateDir, `workspace-${agentId}`);
       const cfg = {
         channels: {
-          telegram: {
-            botToken: "tok",
+          imessage: {
+            cliPath: "/fake/imsg",
+            allowFrom: ["*"],
           },
         },
       } as OpenClawConfig;
 
-      const agentId = "leon";
-      const workspaceDir = path.join(process.env.OPENCLAW_STATE_DIR!, `workspace-${agentId}`);
-      const mediaPath = path.join(workspaceDir, "output", "file.png");
-
-      const result = await runMessageAction({
+      await runMessageAction({
         cfg,
         agentId,
         action: "send",
         params: {
-          channel: "telegram",
-          to: "123",
-          filePath: mediaPath,
+          channel: "imessage",
+          to: "+15551234567",
+          message: "hello",
         },
       });
 
-      expect(result.kind).toBe("send");
-      expect(vi.mocked(sendMessageTelegram)).toHaveBeenCalledWith(
-        "123",
-        "",
-        expect.objectContaining({
-          mediaUrl: mediaPath,
-          mediaLocalRoots: expect.arrayContaining([workspaceDir]),
-        }),
-      );
+      expect(capturedMediaLocalRoots).toEqual(expect.arrayContaining([workspaceDir]));
     } finally {
       await home.restore();
     }
