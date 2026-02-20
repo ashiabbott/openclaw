@@ -54,7 +54,18 @@ export function resolveModel(
   const resolvedAgentDir = agentDir ?? resolveOpenClawAgentDir();
   const authStorage = discoverAuthStorage(resolvedAgentDir);
   const modelRegistry = discoverModels(authStorage, resolvedAgentDir);
-  const model = modelRegistry.find(provider, modelId) as Model<Api> | null;
+  let model = modelRegistry.find(provider, modelId) as Model<Api> | null;
+  if (model) {
+    // The model registry may return entries without an `api` field (e.g.
+    // Ollama models discovered via /api/tags).  When the user's provider
+    // config specifies an `api` override (e.g. `"api": "openai-completions"`),
+    // apply it to the resolved model so mapOptionsForApi routes correctly.
+    const providers = cfg?.models?.providers ?? {};
+    const providerCfg = providers[provider];
+    if (providerCfg?.api && !model.api) {
+      model = { ...model, api: providerCfg.api as Api };
+    }
+  }
   if (!model) {
     const providers = cfg?.models?.providers ?? {};
     const inlineModels = buildInlineProviderModels(providers);

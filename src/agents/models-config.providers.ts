@@ -214,6 +214,10 @@ async function discoverOllamaModels(baseUrl?: string): Promise<ModelDefinitionCo
       return {
         id: modelId,
         name: modelId,
+        // Default to the Ollama-native API.  Users can override this at
+        // the provider level (e.g. `"api": "openai-completions"`) and it
+        // will be applied via buildInlineProviderModels / resolveModel.
+        api: "ollama" as const,
         reasoning: isReasoning,
         input: ["text"],
         cost: OLLAMA_DEFAULT_COST,
