@@ -155,7 +155,7 @@ export async function dispatchReplyFromConfig(params: {
     typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
   const messageIdForHook =
     ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
-  const content =
+  let content =
     typeof ctx.BodyForCommands === "string"
       ? ctx.BodyForCommands
       : typeof ctx.RawBody === "string"
@@ -163,8 +163,58 @@ export async function dispatchReplyFromConfig(params: {
         : typeof ctx.Body === "string"
           ? ctx.Body
           : "";
+  const originalContent = content;
   const channelId = (ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "").toLowerCase();
   const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+  const messageHookMetadata = {
+    to: ctx.To,
+    provider: ctx.Provider,
+    surface: ctx.Surface,
+    threadId: ctx.MessageThreadId,
+    originatingChannel: ctx.OriginatingChannel,
+    originatingTo: ctx.OriginatingTo,
+    messageId: messageIdForHook,
+    senderId: ctx.SenderId,
+    senderName: ctx.SenderName,
+    senderUsername: ctx.SenderUsername,
+    senderE164: ctx.SenderE164,
+  };
+
+  if (hookRunner?.hasHooks("message_preprocess")) {
+    const preprocess = await hookRunner.runMessagePreprocess(
+      {
+        from: ctx.From ?? "",
+        content,
+        timestamp,
+        metadata: messageHookMetadata,
+      },
+      {
+        channelId,
+        accountId: ctx.AccountId,
+        conversationId,
+      },
+    );
+    if (preprocess?.cancel) {
+      recordProcessed("skipped", { reason: "preprocess_cancelled" });
+      return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+    }
+    if (typeof preprocess?.content === "string") {
+      content = preprocess.content;
+      ctx.BodyForAgent = preprocess.content;
+      ctx.BodyForCommands = preprocess.content;
+      ctx.CommandBody = preprocess.content;
+      if (!ctx.RawBody) {
+        ctx.RawBody = originalContent;
+      }
+      if (originalContent !== preprocess.content) {
+        const currentUntrusted = Array.isArray(ctx.UntrustedContext) ? ctx.UntrustedContext : [];
+        ctx.UntrustedContext = [
+          ...currentUntrusted,
+          `Original inbound message before preprocess hook: ${originalContent}`,
+        ];
+      }
+    }
+  }
 
   // Trigger plugin hooks (fire-and-forget)
   if (hookRunner?.hasHooks("message_received")) {
@@ -175,17 +225,8 @@ export async function dispatchReplyFromConfig(params: {
           content,
           timestamp,
           metadata: {
-            to: ctx.To,
-            provider: ctx.Provider,
-            surface: ctx.Surface,
-            threadId: ctx.MessageThreadId,
-            originatingChannel: ctx.OriginatingChannel,
-            originatingTo: ctx.OriginatingTo,
-            messageId: messageIdForHook,
-            senderId: ctx.SenderId,
-            senderName: ctx.SenderName,
-            senderUsername: ctx.SenderUsername,
-            senderE164: ctx.SenderE164,
+            ...messageHookMetadata,
+            originalContent,
           },
         },
         {
@@ -275,6 +316,44 @@ export async function dispatchReplyFromConfig(params: {
     }
   };
 
+  const applyMessagePostprocess = async (
+    payload: ReplyPayload,
+    kind: "tool" | "block" | "final",
+  ): Promise<ReplyPayload | null> => {
+    if (!hookRunner?.hasHooks("message_postprocess")) {
+      return payload;
+    }
+    if (typeof payload.text !== "string") {
+      return payload;
+    }
+    const hookResult = await hookRunner.runMessagePostprocess(
+      {
+        to: ctx.OriginatingTo ?? ctx.To ?? "",
+        content: payload.text,
+        metadata: {
+          kind,
+          channelId,
+          accountId: ctx.AccountId,
+          conversationId,
+          hasMedia: Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0,
+          threadId: ctx.MessageThreadId,
+        },
+      },
+      {
+        channelId,
+        accountId: ctx.AccountId,
+        conversationId,
+      },
+    );
+    if (hookResult?.cancel) {
+      return null;
+    }
+    if (typeof hookResult?.content === "string") {
+      return { ...payload, text: hookResult.content };
+    }
+    return payload;
+  };
+
   markProcessing();
 
   try {
@@ -341,8 +420,12 @@ export async function dispatchReplyFromConfig(params: {
         ...params.replyOptions,
         onToolResult: (payload: ReplyPayload) => {
           const run = async () => {
+            const postprocessedPayload = await applyMessagePostprocess(payload, "tool");
+            if (!postprocessedPayload) {
+              return;
+            }
             const ttsPayload = await maybeApplyTtsToPayload({
-              payload,
+              payload: postprocessedPayload,
               cfg,
               channel: ttsChannel,
               kind: "tool",
@@ -363,16 +446,20 @@ export async function dispatchReplyFromConfig(params: {
         },
         onBlockReply: (payload: ReplyPayload, context) => {
           const run = async () => {
+            const postprocessedPayload = await applyMessagePostprocess(payload, "block");
+            if (!postprocessedPayload) {
+              return;
+            }
             // Accumulate block text for TTS generation after streaming
-            if (payload.text) {
+            if (postprocessedPayload.text) {
               if (accumulatedBlockText.length > 0) {
                 accumulatedBlockText += "\n";
               }
-              accumulatedBlockText += payload.text;
+              accumulatedBlockText += postprocessedPayload.text;
               blockCount++;
             }
             const ttsPayload = await maybeApplyTtsToPayload({
-              payload,
+              payload: postprocessedPayload,
               cfg,
               channel: ttsChannel,
               kind: "block",
@@ -396,8 +483,12 @@ export async function dispatchReplyFromConfig(params: {
     let queuedFinal = false;
     let routedFinalCount = 0;
     for (const reply of replies) {
+      const postprocessedReply = await applyMessagePostprocess(reply, "final");
+      if (!postprocessedReply) {
+        continue;
+      }
       const ttsReply = await maybeApplyTtsToPayload({
-        payload: reply,
+        payload: postprocessedReply,
         cfg,
         channel: ttsChannel,
         kind: "final",
@@ -440,43 +531,51 @@ export async function dispatchReplyFromConfig(params: {
       accumulatedBlockText.trim()
     ) {
       try {
-        const ttsSyntheticReply = await maybeApplyTtsToPayload({
-          payload: { text: accumulatedBlockText },
-          cfg,
-          channel: ttsChannel,
-          kind: "final",
-          inboundAudio,
-          ttsAuto: sessionTtsAuto,
-        });
-        // Only send if TTS was actually applied (mediaUrl exists)
-        if (ttsSyntheticReply.mediaUrl) {
-          // Send TTS-only payload (no text, just audio) so it doesn't duplicate the block content
-          const ttsOnlyPayload: ReplyPayload = {
-            mediaUrl: ttsSyntheticReply.mediaUrl,
-            audioAsVoice: ttsSyntheticReply.audioAsVoice,
-          };
-          if (shouldRouteToOriginating && originatingChannel && originatingTo) {
-            const result = await routeReply({
-              payload: ttsOnlyPayload,
-              channel: originatingChannel,
-              to: originatingTo,
-              sessionKey: ctx.SessionKey,
-              accountId: ctx.AccountId,
-              threadId: ctx.MessageThreadId,
-              cfg,
-            });
-            queuedFinal = result.ok || queuedFinal;
-            if (result.ok) {
-              routedFinalCount += 1;
+        const postprocessedSynthetic = await applyMessagePostprocess(
+          { text: accumulatedBlockText },
+          "final",
+        );
+        if (!postprocessedSynthetic) {
+          // postprocess hook suppressed synthetic TTS-only reply
+        } else {
+          const ttsSyntheticReply = await maybeApplyTtsToPayload({
+            payload: postprocessedSynthetic,
+            cfg,
+            channel: ttsChannel,
+            kind: "final",
+            inboundAudio,
+            ttsAuto: sessionTtsAuto,
+          });
+          // Only send if TTS was actually applied (mediaUrl exists)
+          if (ttsSyntheticReply.mediaUrl) {
+            // Send TTS-only payload (no text, just audio) so it doesn't duplicate the block content
+            const ttsOnlyPayload: ReplyPayload = {
+              mediaUrl: ttsSyntheticReply.mediaUrl,
+              audioAsVoice: ttsSyntheticReply.audioAsVoice,
+            };
+            if (shouldRouteToOriginating && originatingChannel && originatingTo) {
+              const result = await routeReply({
+                payload: ttsOnlyPayload,
+                channel: originatingChannel,
+                to: originatingTo,
+                sessionKey: ctx.SessionKey,
+                accountId: ctx.AccountId,
+                threadId: ctx.MessageThreadId,
+                cfg,
+              });
+              queuedFinal = result.ok || queuedFinal;
+              if (result.ok) {
+                routedFinalCount += 1;
+              }
+              if (!result.ok) {
+                logVerbose(
+                  `dispatch-from-config: route-reply (tts-only) failed: ${result.error ?? "unknown error"}`,
+                );
+              }
+            } else {
+              const didQueue = dispatcher.sendFinalReply(ttsOnlyPayload);
+              queuedFinal = didQueue || queuedFinal;
             }
-            if (!result.ok) {
-              logVerbose(
-                `dispatch-from-config: route-reply (tts-only) failed: ${result.error ?? "unknown error"}`,
-              );
-            }
-          } else {
-            const didQueue = dispatcher.sendFinalReply(ttsOnlyPayload);
-            queuedFinal = didQueue || queuedFinal;
           }
         }
       } catch (err) {

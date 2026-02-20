@@ -24,6 +24,8 @@ const hookMocks = vi.hoisted(() => ({
   runner: {
     hasHooks: vi.fn(() => false),
     runMessageReceived: vi.fn(async () => {}),
+    runMessagePreprocess: vi.fn(async () => undefined),
+    runMessagePostprocess: vi.fn(async () => undefined),
   },
 }));
 const internalHookMocks = vi.hoisted(() => ({
@@ -113,6 +115,10 @@ describe("dispatchReplyFromConfig", () => {
     hookMocks.runner.hasHooks.mockReset();
     hookMocks.runner.hasHooks.mockReturnValue(false);
     hookMocks.runner.runMessageReceived.mockReset();
+    hookMocks.runner.runMessagePreprocess.mockReset();
+    hookMocks.runner.runMessagePreprocess.mockResolvedValue(undefined);
+    hookMocks.runner.runMessagePostprocess.mockReset();
+    hookMocks.runner.runMessagePostprocess.mockResolvedValue(undefined);
     internalHookMocks.createInternalHookEvent.mockReset();
     internalHookMocks.createInternalHookEvent.mockImplementation(createInternalHookEventPayload);
     internalHookMocks.triggerInternalHook.mockClear();
@@ -385,6 +391,137 @@ describe("dispatchReplyFromConfig", () => {
     });
 
     expect(replyResolver).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies message_preprocess hook before invoking reply resolver", async () => {
+    setNoAbort();
+    hookMocks.runner.hasHooks.mockImplementation((hook: string) => hook === "message_preprocess");
+    hookMocks.runner.runMessagePreprocess.mockResolvedValue({ content: "normalized input" });
+
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      From: "telegram:111",
+      To: "telegram:222",
+      CommandBody: "raw input",
+      RawBody: "raw input",
+      BodyForCommands: "raw input",
+      BodyForAgent: "raw input",
+      Body: "raw input",
+    });
+
+    const replyResolver = vi.fn(async (hookCtx: MsgContext) => {
+      return { text: hookCtx.BodyForCommands ?? "" } satisfies ReplyPayload;
+    });
+
+    await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+    expect(hookMocks.runner.runMessagePreprocess).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "raw input" }),
+      expect.objectContaining({ channelId: "telegram" }),
+    );
+    expect(replyResolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        BodyForCommands: "normalized input",
+        BodyForAgent: "normalized input",
+        CommandBody: "normalized input",
+      }),
+      expect.anything(),
+      cfg,
+    );
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "normalized input" });
+  });
+
+  it("skips agent invocation when message_preprocess hook cancels", async () => {
+    setNoAbort();
+    hookMocks.runner.hasHooks.mockImplementation((hook: string) => hook === "message_preprocess");
+    hookMocks.runner.runMessagePreprocess.mockResolvedValue({ cancel: true });
+
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      From: "telegram:111",
+      To: "telegram:222",
+      Body: "hi",
+      CommandBody: "hi",
+      RawBody: "hi",
+      BodyForCommands: "hi",
+      BodyForAgent: "hi",
+    });
+    const replyResolver = vi.fn(async () => ({ text: "should-not-run" }) as ReplyPayload);
+
+    const result = await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+    expect(replyResolver).not.toHaveBeenCalled();
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    expect(result.queuedFinal).toBe(false);
+  });
+
+  it("applies message_postprocess hook to final replies", async () => {
+    setNoAbort();
+    hookMocks.runner.hasHooks.mockImplementation((hook: string) => hook === "message_postprocess");
+    hookMocks.runner.runMessagePostprocess.mockResolvedValue({ content: "formatted output" });
+
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      From: "telegram:111",
+      To: "telegram:222",
+      Body: "hi",
+      CommandBody: "hi",
+      RawBody: "hi",
+      BodyForCommands: "hi",
+      BodyForAgent: "hi",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: async () => ({ text: "raw output" }) satisfies ReplyPayload,
+    });
+
+    expect(hookMocks.runner.runMessagePostprocess).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "raw output" }),
+      expect.objectContaining({ channelId: "telegram" }),
+    );
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "formatted output" });
+  });
+
+  it("suppresses final reply when message_postprocess hook cancels", async () => {
+    setNoAbort();
+    hookMocks.runner.hasHooks.mockImplementation((hook: string) => hook === "message_postprocess");
+    hookMocks.runner.runMessagePostprocess.mockResolvedValue({ cancel: true });
+
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      From: "telegram:111",
+      To: "telegram:222",
+      Body: "hi",
+      CommandBody: "hi",
+      RawBody: "hi",
+      BodyForCommands: "hi",
+      BodyForAgent: "hi",
+    });
+
+    const result = await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: async () => ({ text: "raw output" }) satisfies ReplyPayload,
+    });
+
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    expect(result.queuedFinal).toBe(false);
   });
 
   it("emits message_received hook with originating channel metadata", async () => {

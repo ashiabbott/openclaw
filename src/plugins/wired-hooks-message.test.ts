@@ -1,7 +1,7 @@
 /**
- * Test: message_sending & message_sent hook wiring
+ * Test: message hook wiring
  *
- * Tests the hook runner methods directly since outbound delivery is deeply integrated.
+ * Tests the hook runner methods directly since inbound/outbound delivery paths are deeply integrated.
  */
 import { describe, expect, it, vi } from "vitest";
 import { createHookRunner } from "./hooks.js";
@@ -32,6 +32,62 @@ describe("message_sending hook runner", () => {
 
     const result = await runner.runMessageSending(
       { to: "user-123", content: "blocked" },
+      { channelId: "telegram" },
+    );
+
+    expect(result?.cancel).toBe(true);
+  });
+});
+
+describe("message_preprocess hook runner", () => {
+  it("runMessagePreprocess returns modified content", async () => {
+    const handler = vi.fn().mockReturnValue({ content: "normalized" });
+    const registry = createMockPluginRegistry([{ hookName: "message_preprocess", handler }]);
+    const runner = createHookRunner(registry);
+
+    const result = await runner.runMessagePreprocess(
+      { from: "user-123", content: "original" },
+      { channelId: "telegram" },
+    );
+
+    expect(result?.content).toBe("normalized");
+  });
+
+  it("runMessagePreprocess can cancel processing", async () => {
+    const handler = vi.fn().mockReturnValue({ cancel: true });
+    const registry = createMockPluginRegistry([{ hookName: "message_preprocess", handler }]);
+    const runner = createHookRunner(registry);
+
+    const result = await runner.runMessagePreprocess(
+      { from: "user-123", content: "original" },
+      { channelId: "telegram" },
+    );
+
+    expect(result?.cancel).toBe(true);
+  });
+});
+
+describe("message_postprocess hook runner", () => {
+  it("runMessagePostprocess returns modified content", async () => {
+    const handler = vi.fn().mockReturnValue({ content: "formatted" });
+    const registry = createMockPluginRegistry([{ hookName: "message_postprocess", handler }]);
+    const runner = createHookRunner(registry);
+
+    const result = await runner.runMessagePostprocess(
+      { to: "user-123", content: "raw" },
+      { channelId: "telegram" },
+    );
+
+    expect(result?.content).toBe("formatted");
+  });
+
+  it("runMessagePostprocess can cancel delivery", async () => {
+    const handler = vi.fn().mockReturnValue({ cancel: true });
+    const registry = createMockPluginRegistry([{ hookName: "message_postprocess", handler }]);
+    const runner = createHookRunner(registry);
+
+    const result = await runner.runMessagePostprocess(
+      { to: "user-123", content: "raw" },
       { channelId: "telegram" },
     );
 

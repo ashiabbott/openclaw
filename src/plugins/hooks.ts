@@ -28,6 +28,10 @@ import type {
   PluginHookGatewayStopEvent,
   PluginHookMessageContext,
   PluginHookMessageReceivedEvent,
+  PluginHookMessagePreprocessEvent,
+  PluginHookMessagePreprocessResult,
+  PluginHookMessagePostprocessEvent,
+  PluginHookMessagePostprocessResult,
   PluginHookMessageSendingEvent,
   PluginHookMessageSendingResult,
   PluginHookMessageSentEvent,
@@ -61,6 +65,10 @@ export type {
   PluginHookAfterCompactionEvent,
   PluginHookMessageContext,
   PluginHookMessageReceivedEvent,
+  PluginHookMessagePreprocessEvent,
+  PluginHookMessagePreprocessResult,
+  PluginHookMessagePostprocessEvent,
+  PluginHookMessagePostprocessResult,
   PluginHookMessageSendingEvent,
   PluginHookMessageSendingResult,
   PluginHookMessageSentEvent,
@@ -339,6 +347,157 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
     ctx: PluginHookMessageContext,
   ): Promise<void> {
     return runVoidHook("message_received", event, ctx);
+  }
+  /**
+   * Run message_preprocess hook.
+   * Allows plugins to rewrite or cancel inbound text before the agent sees it.
+   * Runs sequentially with pipeline semantics (each hook sees prior output).
+   */
+  async function runMessagePreprocess(
+    event: PluginHookMessagePreprocessEvent,
+    ctx: PluginHookMessageContext,
+  ): Promise<PluginHookMessagePreprocessResult | undefined> {
+    const hooks = getHooksForName(registry, "message_preprocess");
+    if (hooks.length === 0) {
+      return undefined;
+    }
+
+    logger?.debug?.(`[hooks] running message_preprocess (${hooks.length} handlers, sequential)`);
+
+    let content = event.content;
+    let metadata = event.metadata;
+    let cancel = false;
+
+    for (const hook of hooks) {
+      try {
+        const handlerResult = await (
+          hook.handler as (
+            event: PluginHookMessagePreprocessEvent,
+            ctx: PluginHookMessageContext,
+          ) => Promise<PluginHookMessagePreprocessResult | void>
+        )(
+          {
+            ...event,
+            content,
+            metadata,
+          },
+          ctx,
+        );
+
+        if (!handlerResult) {
+          continue;
+        }
+
+        if (typeof handlerResult.content === "string") {
+          content = handlerResult.content;
+        }
+
+        if (handlerResult.metadata && typeof handlerResult.metadata === "object") {
+          metadata = {
+            ...(metadata ?? {}),
+            ...handlerResult.metadata,
+          };
+        }
+
+        if (handlerResult.cancel === true) {
+          cancel = true;
+          break;
+        }
+      } catch (err) {
+        const msg = `[hooks] message_preprocess handler from ${hook.pluginId} failed: ${String(err)}`;
+        if (catchErrors) {
+          logger?.error(msg);
+        } else {
+          throw new Error(msg, { cause: err });
+        }
+      }
+    }
+
+    if (content === event.content && cancel === false && metadata === event.metadata) {
+      return undefined;
+    }
+
+    return {
+      content,
+      cancel,
+      metadata,
+    };
+  }
+
+  /**
+   * Run message_postprocess hook.
+   * Allows plugins to rewrite or cancel outbound text after agent generation.
+   * Runs sequentially with pipeline semantics (each hook sees prior output).
+   */
+  async function runMessagePostprocess(
+    event: PluginHookMessagePostprocessEvent,
+    ctx: PluginHookMessageContext,
+  ): Promise<PluginHookMessagePostprocessResult | undefined> {
+    const hooks = getHooksForName(registry, "message_postprocess");
+    if (hooks.length === 0) {
+      return undefined;
+    }
+
+    logger?.debug?.(`[hooks] running message_postprocess (${hooks.length} handlers, sequential)`);
+
+    let content = event.content;
+    let metadata = event.metadata;
+    let cancel = false;
+
+    for (const hook of hooks) {
+      try {
+        const handlerResult = await (
+          hook.handler as (
+            event: PluginHookMessagePostprocessEvent,
+            ctx: PluginHookMessageContext,
+          ) => Promise<PluginHookMessagePostprocessResult | void>
+        )(
+          {
+            ...event,
+            content,
+            metadata,
+          },
+          ctx,
+        );
+
+        if (!handlerResult) {
+          continue;
+        }
+
+        if (typeof handlerResult.content === "string") {
+          content = handlerResult.content;
+        }
+
+        if (handlerResult.metadata && typeof handlerResult.metadata === "object") {
+          metadata = {
+            ...(metadata ?? {}),
+            ...handlerResult.metadata,
+          };
+        }
+
+        if (handlerResult.cancel === true) {
+          cancel = true;
+          break;
+        }
+      } catch (err) {
+        const msg = `[hooks] message_postprocess handler from ${hook.pluginId} failed: ${String(err)}`;
+        if (catchErrors) {
+          logger?.error(msg);
+        } else {
+          throw new Error(msg, { cause: err });
+        }
+      }
+    }
+
+    if (content === event.content && cancel === false && metadata === event.metadata) {
+      return undefined;
+    }
+
+    return {
+      content,
+      cancel,
+      metadata,
+    };
   }
 
   /**
@@ -627,6 +786,8 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
     runBeforeReset,
     // Message hooks
     runMessageReceived,
+    runMessagePreprocess,
+    runMessagePostprocess,
     runMessageSending,
     runMessageSent,
     // Tool hooks

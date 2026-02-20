@@ -306,6 +306,8 @@ export type PluginHookName =
   | "after_compaction"
   | "before_reset"
   | "message_received"
+  | "message_preprocess"
+  | "message_postprocess"
   | "message_sending"
   | "message_sent"
   | "before_tool_call"
@@ -441,6 +443,33 @@ export type PluginHookMessageReceivedEvent = {
   from: string;
   content: string;
   timestamp?: number;
+  metadata?: Record<string, unknown>;
+};
+
+// message_preprocess hook
+export type PluginHookMessagePreprocessEvent = {
+  from: string;
+  content: string;
+  timestamp?: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type PluginHookMessagePreprocessResult = {
+  content?: string;
+  cancel?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+// message_postprocess hook
+export type PluginHookMessagePostprocessEvent = {
+  to: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type PluginHookMessagePostprocessResult = {
+  content?: string;
+  cancel?: boolean;
   metadata?: Record<string, unknown>;
 };
 
@@ -601,6 +630,20 @@ export type PluginHookHandlerMap = {
     event: PluginHookMessageReceivedEvent,
     ctx: PluginHookMessageContext,
   ) => Promise<void> | void;
+  message_preprocess: (
+    event: PluginHookMessagePreprocessEvent,
+    ctx: PluginHookMessageContext,
+  ) =>
+    | Promise<PluginHookMessagePreprocessResult | void>
+    | PluginHookMessagePreprocessResult
+    | void;
+  message_postprocess: (
+    event: PluginHookMessagePostprocessEvent,
+    ctx: PluginHookMessageContext,
+  ) =>
+    | Promise<PluginHookMessagePostprocessResult | void>
+    | PluginHookMessagePostprocessResult
+    | void;
   message_sending: (
     event: PluginHookMessageSendingEvent,
     ctx: PluginHookMessageContext,
