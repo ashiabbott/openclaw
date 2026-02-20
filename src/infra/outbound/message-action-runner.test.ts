@@ -11,6 +11,8 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { createIMessageTestPlugin } from "../../test-utils/imessage-test-plugin.js";
+import { createTempHomeEnv } from "../../test-utils/temp-home.js";
+import { sendMessageTelegram } from "../../telegram/send.js";
 import { loadWebMedia } from "../../web/media.js";
 import { runMessageAction } from "./message-action-runner.js";
 
@@ -19,6 +21,16 @@ vi.mock("../../web/media.js", async () => {
   return {
     ...actual,
     loadWebMedia: vi.fn(actual.loadWebMedia),
+  };
+});
+
+vi.mock("../../telegram/send.js", async () => {
+  const actual = await vi.importActual<typeof import("../../telegram/send.js")>(
+    "../../telegram/send.js",
+  );
+  return {
+    ...actual,
+    sendMessageTelegram: vi.fn(async () => ({ messageId: "1", chatId: "1" })),
   };
 });
 
@@ -394,6 +406,48 @@ describe("runMessageAction context isolation", () => {
         abortSignal: controller.signal,
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("passes agent-scoped mediaLocalRoots into plugin send", async () => {
+    const home = await createTempHomeEnv("msg-media-roots-");
+    try {
+      vi.mocked(sendMessageTelegram).mockClear();
+
+      const cfg = {
+        channels: {
+          telegram: {
+            botToken: "tok",
+          },
+        },
+      } as OpenClawConfig;
+
+      const agentId = "leon";
+      const workspaceDir = path.join(process.env.OPENCLAW_STATE_DIR!, `workspace-${agentId}`);
+      const mediaPath = path.join(workspaceDir, "output", "file.png");
+
+      const result = await runMessageAction({
+        cfg,
+        agentId,
+        action: "send",
+        params: {
+          channel: "telegram",
+          to: "123",
+          filePath: mediaPath,
+        },
+      });
+
+      expect(result.kind).toBe("send");
+      expect(vi.mocked(sendMessageTelegram)).toHaveBeenCalledWith(
+        "123",
+        "",
+        expect.objectContaining({
+          mediaUrl: mediaPath,
+          mediaLocalRoots: expect.arrayContaining([workspaceDir]),
+        }),
+      );
+    } finally {
+      await home.restore();
+    }
   });
 });
 

@@ -62,39 +62,6 @@ describe("executeSendAction", () => {
     );
   });
 
-  it("passes agent-scoped mediaLocalRoots to plugin send action dispatch", async () => {
-    mocks.dispatchChannelMessageAction.mockResolvedValue({
-      ok: true,
-      value: { messageId: "send-plugin" },
-      continuePrompt: "",
-      output: "",
-      sessionId: "s1",
-      model: "gpt-5.2",
-      usage: {},
-    });
-
-    await executeSendAction({
-      ctx: {
-        cfg: {},
-        channel: "telegram",
-        params: { media: "/tmp/workspace-work/output/file.png" },
-        agentId: "work",
-        dryRun: false,
-      },
-      to: "chat:123",
-      message: "hello",
-      mediaUrl: "/tmp/workspace-work/output/file.png",
-    });
-
-    expect(mocks.dispatchChannelMessageAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "telegram",
-        action: "send",
-        mediaLocalRoots: expect.arrayContaining([expect.stringMatching(/workspace-work$/)]),
-      }),
-    );
-  });
-
   it("passes agent-scoped mediaLocalRoots to plugin send action", async () => {
     mocks.dispatchChannelMessageAction.mockResolvedValue({
       ok: true,
