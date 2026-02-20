@@ -193,7 +193,12 @@ export async function remove(state: CronServiceState, id: string) {
   });
 }
 
-export async function run(state: CronServiceState, id: string, mode?: "due" | "force") {
+export async function run(
+  state: CronServiceState,
+  id: string,
+  mode?: "due" | "force",
+  opts?: { background?: boolean },
+) {
   return await locked(state, async () => {
     warnIfDisabled(state, "run");
     await ensureLoaded(state, { skipRecompute: true });
@@ -206,6 +211,27 @@ export async function run(state: CronServiceState, id: string, mode?: "due" | "f
     if (!due) {
       return { ok: true, ran: false, reason: "not-due" as const };
     }
+
+    // When background mode is requested, start execution without blocking
+    // the caller.  This avoids WS timeout when the RPC client cannot wait
+    // for a long-running agentTurn to finish (the default CLI timeout is
+    // only 30 s).  Post-execution bookkeeping (persist, recompute, arm) is
+    // performed after the job completes.
+    if (opts?.background) {
+      void (async () => {
+        try {
+          await executeJob(state, job, now, { forced: mode === "force" });
+        } finally {
+          await locked(state, async () => {
+            recomputeNextRuns(state);
+            await persist(state);
+            armTimer(state);
+          });
+        }
+      })();
+      return { ok: true, ran: true } as const;
+    }
+
     await executeJob(state, job, now, { forced: mode === "force" });
     recomputeNextRuns(state);
     await persist(state);

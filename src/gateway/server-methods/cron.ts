@@ -179,7 +179,12 @@ export const cronHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const p = params as { id?: string; jobId?: string; mode?: "due" | "force" };
+    const p = params as {
+      id?: string;
+      jobId?: string;
+      mode?: "due" | "force";
+      expectFinal?: boolean;
+    };
     const jobId = p.id ?? p.jobId;
     if (!jobId) {
       respond(
@@ -189,7 +194,11 @@ export const cronHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const result = await context.cron.run(jobId, p.mode ?? "force");
+    // Default to background execution so the RPC responds immediately.
+    // Long-running agentTurn jobs easily exceed the default 30 s WS client
+    // timeout.  Callers that need the final result can pass expectFinal:true.
+    const background = !p.expectFinal;
+    const result = await context.cron.run(jobId, p.mode ?? "force", { background });
     respond(true, result, undefined);
   },
   "cron.runs": async ({ params, respond, context }) => {

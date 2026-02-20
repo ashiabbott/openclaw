@@ -98,6 +98,7 @@ export function registerCronSimpleCommands(cron: Command) {
           const res = await callGatewayFromCli("cron.run", opts, {
             id,
             mode: opts.due ? "due" : "force",
+            expectFinal: Boolean(opts.expectFinal),
           });
           defaultRuntime.log(JSON.stringify(res, null, 2));
         } catch (err) {

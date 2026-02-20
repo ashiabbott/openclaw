@@ -40,6 +40,13 @@ describe("cron protocol validators", () => {
     expect(validateCronRunParams({ jobId: "job-2", mode: "due" })).toBe(true);
   });
 
+  it("accepts run params with expectFinal flag", () => {
+    expect(validateCronRunParams({ id: "job-1", mode: "force", expectFinal: true })).toBe(true);
+    expect(validateCronRunParams({ id: "job-1", mode: "force", expectFinal: false })).toBe(true);
+    // Without expectFinal is also valid (optional).
+    expect(validateCronRunParams({ id: "job-1" })).toBe(true);
+  });
+
   it("enforces runs limit minimum for id and jobId selectors", () => {
     expect(validateCronRunsParams({ id: "job-1", limit: 1 })).toBe(true);
     expect(validateCronRunsParams({ jobId: "job-2", limit: 1 })).toBe(true);

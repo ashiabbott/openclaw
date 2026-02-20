@@ -226,6 +226,7 @@ export const CronRemoveParamsSchema = cronIdOrJobIdParams({});
 
 export const CronRunParamsSchema = cronIdOrJobIdParams({
   mode: Type.Optional(Type.Union([Type.Literal("due"), Type.Literal("force")])),
+  expectFinal: Type.Optional(Type.Boolean()),
 });
 
 export const CronRunsParamsSchema = cronIdOrJobIdParams({
