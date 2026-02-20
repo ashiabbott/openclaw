@@ -383,22 +383,41 @@ export function buildAllowedModelSet(params: {
   }
 
   const allowedKeys = new Set<string>();
-  const configuredProviders = (params.cfg.models?.providers ?? {}) as Record<string, unknown>;
+  // Synthetic catalog entries for allowlist models not present in the bundled
+  // catalog.  These are surfaced in the TUI model picker so the user sees the
+  // correct (current) model name rather than a stale template entry.
+  const syntheticEntries: ModelCatalogEntry[] = [];
+
   for (const raw of rawAllowlist) {
     const parsed = parseModelRef(String(raw), params.defaultProvider);
     if (!parsed) {
       continue;
     }
     const key = modelKey(parsed.provider, parsed.model);
-    const providerKey = normalizeProviderId(parsed.provider);
-    if (isCliProvider(parsed.provider, params.cfg)) {
-      allowedKeys.add(key);
-    } else if (catalogKeys.has(key)) {
-      allowedKeys.add(key);
-    } else if (configuredProviders[providerKey] != null) {
-      // Explicitly configured providers should be allowlist-able even when
-      // they don't exist in the curated model catalog.
-      allowedKeys.add(key);
+
+    // Models explicitly listed in agents.defaults.models are always allowed,
+    // regardless of whether they appear in the bundled catalog.
+    //
+    // Previously, the loop filtered out models not in the catalog or a
+    // custom-provider config. This caused a regression: newer first-party
+    // models (e.g. anthropic/claude-sonnet-4-6 released after the current
+    // OpenClaw build) were present in the user's allowlist but absent from
+    // the bundled catalog, so the gateway rejected them at runtime even
+    // though `openclaw models status` correctly listed them as allowed.
+    //
+    // The user has explicitly declared each entry — we trust their config.
+    allowedKeys.add(key);
+
+    // If the model is not in the bundled catalog, synthesize a minimal catalog
+    // entry so it appears in the TUI model picker.  Without this, the picker
+    // would only show the (potentially stale) template entry from the catalog
+    // instead of the model the user actually wants to use.
+    if (!catalogKeys.has(key)) {
+      syntheticEntries.push({
+        id: parsed.model,
+        name: parsed.model,
+        provider: parsed.provider,
+      });
     }
   }
 
@@ -406,9 +425,10 @@ export function buildAllowedModelSet(params: {
     allowedKeys.add(defaultKey);
   }
 
-  const allowedCatalog = params.catalog.filter((entry) =>
-    allowedKeys.has(modelKey(entry.provider, entry.id)),
-  );
+  const allowedCatalog = [
+    ...params.catalog.filter((entry) => allowedKeys.has(modelKey(entry.provider, entry.id))),
+    ...syntheticEntries,
+  ];
 
   if (allowedCatalog.length === 0 && allowedKeys.size === 0) {
     if (defaultKey) {
