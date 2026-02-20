@@ -391,6 +391,35 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
   };
 }
 
+const TRANSIENT_API_ERROR_MESSAGE =
+  "The AI service encountered a temporary error. Please try again in a moment.";
+
+/**
+ * Error types from LLM providers that represent transient server-side
+ * failures.  These must NEVER expose raw details (type names, messages,
+ * request IDs) to end users — they carry no actionable information and
+ * may leak internal provider context.
+ */
+const TRANSIENT_API_ERROR_TYPES = new Set([
+  "api_error",
+  "server_error",
+  "internal_error",
+  "internal_server_error",
+]);
+
+function isTransientApiErrorInfo(info: ApiErrorInfo): boolean {
+  if (info.type && TRANSIENT_API_ERROR_TYPES.has(info.type)) {
+    return true;
+  }
+  if (info.httpCode) {
+    const code = Number(info.httpCode);
+    if (TRANSIENT_HTTP_ERROR_CODES.has(code)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function formatRawAssistantErrorForUi(raw?: string): string {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) {
@@ -402,8 +431,18 @@ export function formatRawAssistantErrorForUi(raw?: string): string {
     return `The AI service is temporarily unavailable (HTTP ${leadingStatus.code}). Please try again in a moment.`;
   }
 
+  // Transient HTTP errors (500, 502, 503, …) — return generic message
+  // without exposing raw error body or internal details.
+  if (leadingStatus && TRANSIENT_HTTP_ERROR_CODES.has(leadingStatus.code)) {
+    return TRANSIENT_API_ERROR_MESSAGE;
+  }
+
   const httpMatch = trimmed.match(HTTP_STATUS_PREFIX_RE);
   if (httpMatch) {
+    const code = Number(httpMatch[1]);
+    if (TRANSIENT_HTTP_ERROR_CODES.has(code)) {
+      return TRANSIENT_API_ERROR_MESSAGE;
+    }
     const rest = httpMatch[2].trim();
     if (!rest.startsWith("{")) {
       return `HTTP ${httpMatch[1]}: ${rest}`;
@@ -411,11 +450,18 @@ export function formatRawAssistantErrorForUi(raw?: string): string {
   }
 
   const info = parseApiErrorInfo(trimmed);
-  if (info?.message) {
-    const prefix = info.httpCode ? `HTTP ${info.httpCode}` : "LLM error";
-    const type = info.type ? ` ${info.type}` : "";
-    const requestId = info.requestId ? ` (request_id: ${info.requestId})` : "";
-    return `${prefix}${type}: ${info.message}${requestId}`;
+  if (info) {
+    // Transient server errors — never expose raw details to end users.
+    if (isTransientApiErrorInfo(info)) {
+      return TRANSIENT_API_ERROR_MESSAGE;
+    }
+    if (info.message) {
+      const prefix = info.httpCode ? `HTTP ${info.httpCode}` : "LLM error";
+      const type = info.type ? ` ${info.type}` : "";
+      // Intentionally omit request_id — it's an internal provider detail
+      // with no value to end users and risks leaking context.
+      return `${prefix}${type}: ${info.message}`;
+    }
   }
 
   return trimmed.length > 600 ? `${trimmed.slice(0, 600)}…` : trimmed;

@@ -53,11 +53,15 @@ describe("formatAssistantErrorText", () => {
     expect(result).toContain("Message ordering conflict");
     expect(result).not.toContain("400");
   });
-  it("suppresses raw error JSON payloads that are not otherwise classified", () => {
+  it("returns a generic transient error message for server_error API payloads", () => {
+    // server_error is a transient provider-side failure — raw details must never
+    // reach end users (request IDs, internal type names, error messages).
     const msg = makeAssistantError(
       '{"type":"error","error":{"message":"Something exploded","type":"server_error"}}',
     );
-    expect(formatAssistantErrorText(msg)).toBe("LLM error server_error: Something exploded");
+    expect(formatAssistantErrorText(msg)).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
   });
   it("returns a friendly billing message for credit balance errors", () => {
     const msg = makeAssistantError("Your credit balance is too low to access the Anthropic API.");
@@ -105,7 +109,7 @@ describe("formatAssistantErrorText", () => {
 });
 
 describe("formatRawAssistantErrorForUi", () => {
-  it("renders HTTP code + type + message from Anthropic payloads", () => {
+  it("renders HTTP code + type + message from Anthropic payloads (no request_id leaked)", () => {
     const text = formatRawAssistantErrorForUi(
       '429 {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited."},"request_id":"req_123"}',
     );
@@ -113,17 +117,26 @@ describe("formatRawAssistantErrorForUi", () => {
     expect(text).toContain("HTTP 429");
     expect(text).toContain("rate_limit_error");
     expect(text).toContain("Rate limited.");
-    expect(text).toContain("req_123");
+    // request_id is an internal provider detail — must not appear in user-facing output.
+    expect(text).not.toContain("req_123");
+    expect(text).not.toContain("request_id");
   });
 
   it("renders a generic unknown error message when raw is empty", () => {
     expect(formatRawAssistantErrorForUi("")).toContain("unknown error");
   });
 
-  it("formats plain HTTP status lines", () => {
+  it("returns a generic transient message for HTTP 500 errors", () => {
+    // HTTP 500 is a transient server error — raw details must not reach end users.
     expect(formatRawAssistantErrorForUi("500 Internal Server Error")).toBe(
-      "HTTP 500: Internal Server Error",
+      "The AI service encountered a temporary error. Please try again in a moment.",
     );
+  });
+
+  it("formats non-transient HTTP status lines as-is", () => {
+    // Client errors (4xx, except known ones) should still surface the raw message
+    // so users can act on them (e.g., 401 Unauthorized → they know to check API key).
+    expect(formatRawAssistantErrorForUi("400 Bad Request")).toBe("HTTP 400: Bad Request");
   });
 
   it("sanitizes HTML error pages into a clean unavailable message", () => {
@@ -136,5 +149,87 @@ describe("formatRawAssistantErrorForUi", () => {
     expect(formatRawAssistantErrorForUi(htmlError)).toBe(
       "The AI service is temporarily unavailable (HTTP 521). Please try again in a moment.",
     );
+  });
+
+  // Regression: https://github.com/openclaw/openclaw/issues/20250
+  // Transient server errors (api_error, internal_error, server_error) must
+  // never expose raw provider details — type names, messages, request IDs —
+  // to end users via WhatsApp or other messaging channels.
+
+  it("returns generic message for Anthropic api_error (exact bug scenario)", () => {
+    const raw =
+      '{"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_011CYFmpt8r8CFFmnpgGL5cQ"}';
+    const result = formatRawAssistantErrorForUi(raw);
+    expect(result).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+    expect(result).not.toContain("request_id");
+    expect(result).not.toContain("req_011CYFmpt8r8CFFmnpgGL5cQ");
+    expect(result).not.toContain("api_error");
+  });
+
+  it("returns generic message for api_error with HTTP 500 prefix", () => {
+    const raw =
+      '500 {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_abc"}';
+    const result = formatRawAssistantErrorForUi(raw);
+    expect(result).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+    expect(result).not.toContain("req_abc");
+  });
+
+  it("returns generic message for internal_error type", () => {
+    const raw = '{"type":"error","error":{"type":"internal_error","message":"Unexpected failure"}}';
+    expect(formatRawAssistantErrorForUi(raw)).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+  });
+
+  it("returns generic message for HTTP 502 and 503 errors", () => {
+    expect(formatRawAssistantErrorForUi("502 Bad Gateway")).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+    expect(formatRawAssistantErrorForUi("503 Service Unavailable")).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+  });
+});
+
+describe("formatAssistantErrorText — transient server error sanitization", () => {
+  const makeAssistantError = (errorMessage: string): import("@mariozechner/pi-ai").AssistantMessage =>
+    makeAssistantMessageFixture({
+      errorMessage,
+      content: [{ type: "text", text: errorMessage }],
+    });
+
+  // Regression: https://github.com/openclaw/openclaw/issues/20250
+  it("never sends raw api_error details to end users", () => {
+    const raw =
+      '{"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_011CYFmpt8r8CFFmnpgGL5cQ"}';
+    const result = formatAssistantErrorText(makeAssistantError(raw));
+    expect(result).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+    expect(result).not.toContain("req_011CYFmpt8r8CFFmnpgGL5cQ");
+    expect(result).not.toContain("api_error");
+  });
+
+  it("never sends raw internal_server_error details to end users", () => {
+    const raw =
+      '{"type":"error","error":{"type":"internal_server_error","message":"Something went wrong"},"request_id":"req_xyz"}';
+    const result = formatAssistantErrorText(makeAssistantError(raw));
+    expect(result).toBe(
+      "The AI service encountered a temporary error. Please try again in a moment.",
+    );
+    expect(result).not.toContain("req_xyz");
+  });
+
+  it("still surfaces rate limit errors with friendly copy", () => {
+    const msg = makeAssistantError(
+      '{"type":"error","error":{"type":"rate_limit_error","message":"Too many requests"},"request_id":"req_abc"}',
+    );
+    const result = formatAssistantErrorText(msg);
+    expect(result).toContain("rate limit");
+    expect(result).not.toContain("req_abc");
   });
 });
