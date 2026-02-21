@@ -49,6 +49,34 @@ describe("agents/model-forward-compat", () => {
     expect(model?.provider).toBe("anthropic");
   });
 
+  it("resolves google-antigravity opus 4.6 from thinking-only 4.5 template", () => {
+    const registry = createRegistry({
+      "google-antigravity/claude-opus-4-5-thinking": createTemplateModel(
+        "google-antigravity",
+        "claude-opus-4-5-thinking",
+      ),
+    });
+    const model = resolveForwardCompatModel("google-antigravity", "claude-opus-4-6", registry);
+    expect(model?.id).toBe("claude-opus-4-6");
+    expect(model?.provider).toBe("google-antigravity");
+  });
+
+  it("resolves google-antigravity sonnet 4.6 via 4.5 template", () => {
+    const registry = createRegistry({
+      "google-antigravity/claude-sonnet-4-5": createTemplateModel(
+        "google-antigravity",
+        "claude-sonnet-4-5",
+      ),
+    });
+    const model = resolveForwardCompatModel(
+      "google-antigravity",
+      "claude-sonnet-4-6",
+      registry,
+    );
+    expect(model?.id).toBe("claude-sonnet-4-6");
+    expect(model?.provider).toBe("google-antigravity");
+  });
+
   it("does not resolve anthropic 4.6 fallback for other providers", () => {
     const registry = createRegistry({
       "anthropic/claude-opus-4-5": createTemplateModel("anthropic", "claude-opus-4-5"),

@@ -27,6 +27,16 @@ const ANTIGRAVITY_OPUS_THINKING_TEMPLATE_MODEL_IDS = [
   "claude-opus-4.5-thinking",
 ] as const;
 
+const ANTIGRAVITY_SONNET_46_MODEL_ID = "claude-sonnet-4-6";
+const ANTIGRAVITY_SONNET_46_DOT_MODEL_ID = "claude-sonnet-4.6";
+const ANTIGRAVITY_SONNET_TEMPLATE_MODEL_IDS = ["claude-sonnet-4-5", "claude-sonnet-4.5"] as const;
+const ANTIGRAVITY_SONNET_46_THINKING_MODEL_ID = "claude-sonnet-4-6-thinking";
+const ANTIGRAVITY_SONNET_46_DOT_THINKING_MODEL_ID = "claude-sonnet-4.6-thinking";
+const ANTIGRAVITY_SONNET_THINKING_TEMPLATE_MODEL_IDS = [
+  "claude-sonnet-4-5-thinking",
+  "claude-sonnet-4.5-thinking",
+] as const;
+
 export const ANTIGRAVITY_OPUS_46_FORWARD_COMPAT_CANDIDATES = [
   {
     id: ANTIGRAVITY_OPUS_46_THINKING_MODEL_ID,
@@ -38,6 +48,20 @@ export const ANTIGRAVITY_OPUS_46_FORWARD_COMPAT_CANDIDATES = [
   {
     id: ANTIGRAVITY_OPUS_46_MODEL_ID,
     templatePrefixes: ["google-antigravity/claude-opus-4-5", "google-antigravity/claude-opus-4.5"],
+  },
+  {
+    id: ANTIGRAVITY_SONNET_46_THINKING_MODEL_ID,
+    templatePrefixes: [
+      "google-antigravity/claude-sonnet-4-5-thinking",
+      "google-antigravity/claude-sonnet-4.5-thinking",
+    ],
+  },
+  {
+    id: ANTIGRAVITY_SONNET_46_MODEL_ID,
+    templatePrefixes: [
+      "google-antigravity/claude-sonnet-4-5",
+      "google-antigravity/claude-sonnet-4.5",
+    ],
   },
 ] as const;
 
@@ -224,57 +248,107 @@ function resolveZaiGlm5ForwardCompatModel(
   } as Model<Api>);
 }
 
-function resolveAntigravityOpus46ForwardCompatModel(
-  provider: string,
-  modelId: string,
-  modelRegistry: ModelRegistry,
-): Model<Api> | undefined {
-  const normalizedProvider = normalizeProviderId(provider);
+function resolveAntigravityClaude46ForwardCompatModel(params: {
+  provider: string;
+  modelId: string;
+  modelRegistry: ModelRegistry;
+  dashModelId: string;
+  dotModelId: string;
+  dashTemplateId: string;
+  dotTemplateId: string;
+  dashThinkingModelId: string;
+  dotThinkingModelId: string;
+  dashThinkingTemplateId: string;
+  dotThinkingTemplateId: string;
+  fallbackTemplateIds: readonly string[];
+  fallbackThinkingTemplateIds: readonly string[];
+}): Model<Api> | undefined {
+  const normalizedProvider = normalizeProviderId(params.provider);
   if (normalizedProvider !== "google-antigravity") {
     return undefined;
   }
 
-  const trimmedModelId = modelId.trim();
+  const trimmedModelId = params.modelId.trim();
   const lower = trimmedModelId.toLowerCase();
-  const isOpus46 =
-    lower === ANTIGRAVITY_OPUS_46_MODEL_ID ||
-    lower === ANTIGRAVITY_OPUS_46_DOT_MODEL_ID ||
-    lower.startsWith(`${ANTIGRAVITY_OPUS_46_MODEL_ID}-`) ||
-    lower.startsWith(`${ANTIGRAVITY_OPUS_46_DOT_MODEL_ID}-`);
-  const isOpus46Thinking =
-    lower === ANTIGRAVITY_OPUS_46_THINKING_MODEL_ID ||
-    lower === ANTIGRAVITY_OPUS_46_DOT_THINKING_MODEL_ID ||
-    lower.startsWith(`${ANTIGRAVITY_OPUS_46_THINKING_MODEL_ID}-`) ||
-    lower.startsWith(`${ANTIGRAVITY_OPUS_46_DOT_THINKING_MODEL_ID}-`);
-  if (!isOpus46 && !isOpus46Thinking) {
+  const is46 =
+    lower === params.dashModelId ||
+    lower === params.dotModelId ||
+    lower.startsWith(`${params.dashModelId}-`) ||
+    lower.startsWith(`${params.dotModelId}-`);
+  const is46Thinking =
+    lower === params.dashThinkingModelId ||
+    lower === params.dotThinkingModelId ||
+    lower.startsWith(`${params.dashThinkingModelId}-`) ||
+    lower.startsWith(`${params.dotThinkingModelId}-`);
+  if (!is46 && !is46Thinking) {
     return undefined;
   }
 
   const templateIds: string[] = [];
-  if (lower.startsWith(ANTIGRAVITY_OPUS_46_MODEL_ID)) {
-    templateIds.push(lower.replace(ANTIGRAVITY_OPUS_46_MODEL_ID, "claude-opus-4-5"));
+  if (lower.startsWith(params.dashModelId)) {
+    templateIds.push(lower.replace(params.dashModelId, params.dashTemplateId));
   }
-  if (lower.startsWith(ANTIGRAVITY_OPUS_46_DOT_MODEL_ID)) {
-    templateIds.push(lower.replace(ANTIGRAVITY_OPUS_46_DOT_MODEL_ID, "claude-opus-4.5"));
+  if (lower.startsWith(params.dotModelId)) {
+    templateIds.push(lower.replace(params.dotModelId, params.dotTemplateId));
   }
-  if (lower.startsWith(ANTIGRAVITY_OPUS_46_THINKING_MODEL_ID)) {
-    templateIds.push(
-      lower.replace(ANTIGRAVITY_OPUS_46_THINKING_MODEL_ID, "claude-opus-4-5-thinking"),
-    );
+  if (lower.startsWith(params.dashThinkingModelId)) {
+    templateIds.push(lower.replace(params.dashThinkingModelId, params.dashThinkingTemplateId));
   }
-  if (lower.startsWith(ANTIGRAVITY_OPUS_46_DOT_THINKING_MODEL_ID)) {
-    templateIds.push(
-      lower.replace(ANTIGRAVITY_OPUS_46_DOT_THINKING_MODEL_ID, "claude-opus-4.5-thinking"),
-    );
+  if (lower.startsWith(params.dotThinkingModelId)) {
+    templateIds.push(lower.replace(params.dotThinkingModelId, params.dotThinkingTemplateId));
   }
-  templateIds.push(...ANTIGRAVITY_OPUS_TEMPLATE_MODEL_IDS);
-  templateIds.push(...ANTIGRAVITY_OPUS_THINKING_TEMPLATE_MODEL_IDS);
+  templateIds.push(...params.fallbackTemplateIds);
+  templateIds.push(...params.fallbackThinkingTemplateIds);
 
   return cloneFirstTemplateModel({
     normalizedProvider,
     trimmedModelId,
     templateIds,
+    modelRegistry: params.modelRegistry,
+  });
+}
+
+function resolveAntigravityOpus46ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  return resolveAntigravityClaude46ForwardCompatModel({
+    provider,
+    modelId,
     modelRegistry,
+    dashModelId: ANTIGRAVITY_OPUS_46_MODEL_ID,
+    dotModelId: ANTIGRAVITY_OPUS_46_DOT_MODEL_ID,
+    dashTemplateId: "claude-opus-4-5",
+    dotTemplateId: "claude-opus-4.5",
+    dashThinkingModelId: ANTIGRAVITY_OPUS_46_THINKING_MODEL_ID,
+    dotThinkingModelId: ANTIGRAVITY_OPUS_46_DOT_THINKING_MODEL_ID,
+    dashThinkingTemplateId: "claude-opus-4-5-thinking",
+    dotThinkingTemplateId: "claude-opus-4.5-thinking",
+    fallbackTemplateIds: ANTIGRAVITY_OPUS_TEMPLATE_MODEL_IDS,
+    fallbackThinkingTemplateIds: ANTIGRAVITY_OPUS_THINKING_TEMPLATE_MODEL_IDS,
+  });
+}
+
+function resolveAntigravitySonnet46ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  return resolveAntigravityClaude46ForwardCompatModel({
+    provider,
+    modelId,
+    modelRegistry,
+    dashModelId: ANTIGRAVITY_SONNET_46_MODEL_ID,
+    dotModelId: ANTIGRAVITY_SONNET_46_DOT_MODEL_ID,
+    dashTemplateId: "claude-sonnet-4-5",
+    dotTemplateId: "claude-sonnet-4.5",
+    dashThinkingModelId: ANTIGRAVITY_SONNET_46_THINKING_MODEL_ID,
+    dotThinkingModelId: ANTIGRAVITY_SONNET_46_DOT_THINKING_MODEL_ID,
+    dashThinkingTemplateId: "claude-sonnet-4-5-thinking",
+    dotThinkingTemplateId: "claude-sonnet-4.5-thinking",
+    fallbackTemplateIds: ANTIGRAVITY_SONNET_TEMPLATE_MODEL_IDS,
+    fallbackThinkingTemplateIds: ANTIGRAVITY_SONNET_THINKING_TEMPLATE_MODEL_IDS,
   });
 }
 
@@ -288,6 +362,7 @@ export function resolveForwardCompatModel(
     resolveAnthropicOpus46ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveAnthropicSonnet46ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveZaiGlm5ForwardCompatModel(provider, modelId, modelRegistry) ??
-    resolveAntigravityOpus46ForwardCompatModel(provider, modelId, modelRegistry)
+    resolveAntigravityOpus46ForwardCompatModel(provider, modelId, modelRegistry) ??
+    resolveAntigravitySonnet46ForwardCompatModel(provider, modelId, modelRegistry)
   );
 }
