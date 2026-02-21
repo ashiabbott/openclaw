@@ -164,6 +164,25 @@ describe("config cli", () => {
       expect(errors).toContain("openclaw models list");
     });
 
+    it("rejects unknown model IDs for strict providers even when catalog provider is unavailable", async () => {
+      const resolved: OpenClawConfig = { gateway: { port: 18789 } };
+      setSnapshot(resolved, resolved);
+      mockLoadModelCatalog.mockResolvedValue([]);
+
+      await expect(
+        runConfigCommand([
+          "config",
+          "set",
+          "agents.defaults.model.primary",
+          "amazon-bedrock/us.anthropic.claude-opus-4-6-v1:0",
+        ]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      const errors = mockError.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(errors).toContain("not found in provider");
+    });
+
     it("accepts model IDs found in catalog", async () => {
       const resolved: OpenClawConfig = { gateway: { port: 18789 } };
       setSnapshot(resolved, resolved);

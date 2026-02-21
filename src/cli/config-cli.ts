@@ -5,6 +5,7 @@ import { loadModelCatalog } from "../agents/model-catalog.js";
 import {
   buildModelAliasIndex,
   modelKey,
+  normalizeProviderId,
   parseModelRef,
   resolveModelRefFromString,
 } from "../agents/model-selection.js";
@@ -22,6 +23,8 @@ type PathSegment = string;
 type ConfigSetParseOpts = {
   strictJson?: boolean;
 };
+
+const STRICT_MODEL_VALIDATION_PROVIDERS = new Set(["amazon-bedrock"]);
 
 function isIndexSegment(raw: string): boolean {
   return /^[0-9]+$/.test(raw);
@@ -236,50 +239,6 @@ function parseRequiredPath(path: string): PathSegment[] {
   return parsedPath;
 }
 
-function shouldValidateConfiguredPrimaryModel(path: PathSegment[]): boolean {
-  const joined = path.join(".");
-  return joined === "agents.defaults.model.primary" || joined === "agents.defaults.model";
-}
-
-async function validateConfiguredPrimaryModelOrThrow(params: {
-  next: Record<string, unknown>;
-  path: PathSegment[];
-}): Promise<void> {
-  if (!shouldValidateConfiguredPrimaryModel(params.path)) {
-    return;
-  }
-
-  const [defaultsMod, selectionMod, catalogMod] = await Promise.all([
-    import("../agents/defaults.js"),
-    import("../agents/model-selection.js"),
-    import("../agents/model-catalog.js"),
-  ]);
-
-  const cfg = params.next as OpenClawConfig;
-  const resolved = selectionMod.resolveConfiguredModelRef({
-    cfg,
-    defaultProvider: defaultsMod.DEFAULT_PROVIDER,
-    defaultModel: defaultsMod.DEFAULT_MODEL,
-  });
-
-  const catalog = await catalogMod.loadModelCatalog({
-    config: cfg,
-    useCache: false,
-  });
-
-  if (catalog.length === 0) {
-    return;
-  }
-
-  const found = catalog.some(
-    (entry) => entry.provider === resolved.provider && entry.id === resolved.model,
-  );
-  if (!found) {
-    throw new Error(
-      `Model '${resolved.provider}/${resolved.model}' not found. Run '${formatCliCommand("openclaw models list")}' to see available models.`,
-    );
-  }
-}
 
 function pathStartsWith(path: readonly string[], prefix: readonly string[]): boolean {
   if (path.length < prefix.length) {
@@ -393,9 +352,13 @@ async function validateModelRefsForConfigSet(params: {
       continue;
     }
 
-    // If we don't know this provider from the local model catalog, don't hard-fail.
-    // Some providers/models may be discoverable only at runtime in specific environments.
-    const providerKnown = catalogProviders.has(resolved.ref.provider.toLowerCase());
+    // If we don't know this provider from the local model catalog, don't hard-fail
+    // except for providers where we want strict validation during config set.
+    // This closes the amazon-bedrock runtime-failure footgun from #20505.
+    const normalizedProvider = normalizeProviderId(resolved.ref.provider);
+    const providerKnown =
+      catalogProviders.has(normalizedProvider) ||
+      STRICT_MODEL_VALIDATION_PROVIDERS.has(normalizedProvider);
     if (!providerKnown) {
       continue;
     }
