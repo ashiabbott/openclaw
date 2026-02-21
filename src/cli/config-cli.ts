@@ -1,5 +1,14 @@
 import type { Command } from "commander";
 import JSON5 from "json5";
+import { DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { loadModelCatalog } from "../agents/model-catalog.js";
+import {
+  buildModelAliasIndex,
+  modelKey,
+  parseModelRef,
+  resolveModelRefFromString,
+} from "../agents/model-selection.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { readConfigFileSnapshot, writeConfigFile } from "../config/config.js";
 import { danger, info } from "../globals.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -227,6 +236,176 @@ function parseRequiredPath(path: string): PathSegment[] {
   return parsedPath;
 }
 
+function shouldValidateConfiguredPrimaryModel(path: PathSegment[]): boolean {
+  const joined = path.join(".");
+  return joined === "agents.defaults.model.primary" || joined === "agents.defaults.model";
+}
+
+async function validateConfiguredPrimaryModelOrThrow(params: {
+  next: Record<string, unknown>;
+  path: PathSegment[];
+}): Promise<void> {
+  if (!shouldValidateConfiguredPrimaryModel(params.path)) {
+    return;
+  }
+
+  const [defaultsMod, selectionMod, catalogMod] = await Promise.all([
+    import("../agents/defaults.js"),
+    import("../agents/model-selection.js"),
+    import("../agents/model-catalog.js"),
+  ]);
+
+  const cfg = params.next as OpenClawConfig;
+  const resolved = selectionMod.resolveConfiguredModelRef({
+    cfg,
+    defaultProvider: defaultsMod.DEFAULT_PROVIDER,
+    defaultModel: defaultsMod.DEFAULT_MODEL,
+  });
+
+  const catalog = await catalogMod.loadModelCatalog({
+    config: cfg,
+    useCache: false,
+  });
+
+  if (catalog.length === 0) {
+    return;
+  }
+
+  const found = catalog.some(
+    (entry) => entry.provider === resolved.provider && entry.id === resolved.model,
+  );
+  if (!found) {
+    throw new Error(
+      `Model '${resolved.provider}/${resolved.model}' not found. Run '${formatCliCommand("openclaw models list")}' to see available models.`,
+    );
+  }
+}
+
+function pathStartsWith(path: readonly string[], prefix: readonly string[]): boolean {
+  if (path.length < prefix.length) {
+    return false;
+  }
+  return prefix.every((segment, idx) => path[idx] === segment);
+}
+
+function isModelValidationPath(path: readonly string[]): boolean {
+  const isAgentListModel =
+    pathStartsWith(path, ["agents", "list"]) &&
+    (path.includes("model") || path.includes("imageModel"));
+
+  return (
+    pathStartsWith(path, ["agents", "defaults", "model"]) ||
+    pathStartsWith(path, ["agents", "defaults", "imageModel"]) ||
+    pathStartsWith(path, ["hooks", "gmail", "model"]) ||
+    isAgentListModel
+  );
+}
+
+function collectCandidateModelRefs(cfg: OpenClawConfig): string[] {
+  const out = new Set<string>();
+
+  const push = (value: unknown) => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      out.add(value.trim());
+    }
+  };
+
+  const collectPrimaryFallback = (value: unknown) => {
+    if (typeof value === "string") {
+      push(value);
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    const record = value as { primary?: unknown; fallbacks?: unknown };
+    push(record.primary);
+    if (Array.isArray(record.fallbacks)) {
+      for (const fallback of record.fallbacks) {
+        push(fallback);
+      }
+    }
+  };
+
+  collectPrimaryFallback(cfg.agents?.defaults?.model as unknown);
+  collectPrimaryFallback(cfg.agents?.defaults?.imageModel as unknown);
+  push(cfg.hooks?.gmail?.model);
+
+  const agentList = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
+  for (const agent of agentList) {
+    if (!agent || typeof agent !== "object") {
+      continue;
+    }
+    const record = agent as { model?: unknown; imageModel?: unknown };
+    collectPrimaryFallback(record.model);
+    collectPrimaryFallback(record.imageModel);
+  }
+
+  return [...out];
+}
+
+async function validateModelRefsForConfigSet(params: {
+  cfg: OpenClawConfig;
+  path: readonly string[];
+}): Promise<void> {
+  if (!isModelValidationPath(params.path)) {
+    return;
+  }
+
+  const candidates = collectCandidateModelRefs(params.cfg);
+  if (candidates.length === 0) {
+    return;
+  }
+
+  const catalog = await loadModelCatalog({ config: params.cfg });
+  const catalogKeys = new Set(
+    catalog.map((entry) => modelKey(String(entry.provider ?? ""), String(entry.id ?? ""))),
+  );
+  const catalogProviders = new Set(catalog.map((entry) => String(entry.provider ?? "").toLowerCase()));
+  const configuredKeys = new Set<string>();
+  for (const raw of Object.keys(params.cfg.agents?.defaults?.models ?? {})) {
+    const parsed = parseModelRef(String(raw ?? ""), DEFAULT_PROVIDER);
+    if (!parsed) {
+      continue;
+    }
+    configuredKeys.add(modelKey(parsed.provider, parsed.model));
+  }
+
+  const aliasIndex = buildModelAliasIndex({
+    cfg: params.cfg,
+    defaultProvider: DEFAULT_PROVIDER,
+  });
+
+  for (const raw of candidates) {
+    const resolved = resolveModelRefFromString({
+      raw,
+      defaultProvider: DEFAULT_PROVIDER,
+      aliasIndex,
+    });
+    if (!resolved) {
+      throw new Error(
+        `Invalid model reference: ${raw}. Run \`${formatCliCommand("openclaw models list")}\` to see available models.`,
+      );
+    }
+
+    const key = modelKey(resolved.ref.provider, resolved.ref.model);
+    if (catalogKeys.has(key) || configuredKeys.has(key)) {
+      continue;
+    }
+
+    // If we don't know this provider from the local model catalog, don't hard-fail.
+    // Some providers/models may be discoverable only at runtime in specific environments.
+    const providerKnown = catalogProviders.has(resolved.ref.provider.toLowerCase());
+    if (!providerKnown) {
+      continue;
+    }
+
+    throw new Error(
+      `Model '${key}' not found in provider '${resolved.ref.provider}'. Run \`${formatCliCommand("openclaw models list")}\` to see available models.`,
+    );
+  }
+}
+
 export async function runConfigGet(opts: { path: string; json?: boolean; runtime?: RuntimeEnv }) {
   const runtime = opts.runtime ?? defaultRuntime;
   try {
@@ -333,7 +512,11 @@ export function registerConfigCli(program: Command) {
         // This prevents runtime defaults from leaking into the written config file (issue #6070)
         const next = structuredClone(snapshot.resolved) as Record<string, unknown>;
         setAtPath(next, parsedPath, parsedValue);
-        await writeConfigFile(next);
+        await validateModelRefsForConfigSet({
+          cfg: next as OpenClawConfig,
+          path: parsedPath,
+        });
+        await writeConfigFile(next as OpenClawConfig);
         defaultRuntime.log(info(`Updated ${path}. Restart the gateway to apply.`));
       } catch (err) {
         defaultRuntime.error(danger(String(err)));

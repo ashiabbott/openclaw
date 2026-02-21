@@ -10,10 +10,15 @@ import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.js";
 
 const mockReadConfigFileSnapshot = vi.fn<() => Promise<ConfigFileSnapshot>>();
 const mockWriteConfigFile = vi.fn<(cfg: OpenClawConfig) => Promise<void>>(async () => {});
+const mockLoadModelCatalog = vi.fn<() => Promise<Array<{ id: string; provider: string }>>>();
 
 vi.mock("../config/config.js", () => ({
   readConfigFileSnapshot: () => mockReadConfigFileSnapshot(),
   writeConfigFile: (cfg: OpenClawConfig) => mockWriteConfigFile(cfg),
+}));
+
+vi.mock("../agents/model-catalog.js", () => ({
+  loadModelCatalog: () => mockLoadModelCatalog(),
 }));
 
 const mockLog = vi.fn();
@@ -64,6 +69,7 @@ async function runConfigCommand(args: string[]) {
 describe("config cli", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLoadModelCatalog.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -132,6 +138,70 @@ describe("config cli", () => {
       expect(written).not.toHaveProperty("sessions.persistence");
       expect(written.gateway?.port).toBe(18789);
       expect(written.gateway?.auth).toEqual({ mode: "token" });
+    });
+  });
+
+  describe("config set model validation", () => {
+    it("rejects unknown model IDs for known providers", async () => {
+      const resolved: OpenClawConfig = { gateway: { port: 18789 } };
+      setSnapshot(resolved, resolved);
+      mockLoadModelCatalog.mockResolvedValue([
+        { provider: "amazon-bedrock", id: "anthropic.claude-3-5-sonnet" },
+      ]);
+
+      await expect(
+        runConfigCommand([
+          "config",
+          "set",
+          "agents.defaults.model.primary",
+          "amazon-bedrock/us.anthropic.claude-opus-4-6-v1:0",
+        ]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      const errors = mockError.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(errors).toContain("not found in provider");
+      expect(errors).toContain("openclaw models list");
+    });
+
+    it("accepts model IDs found in catalog", async () => {
+      const resolved: OpenClawConfig = { gateway: { port: 18789 } };
+      setSnapshot(resolved, resolved);
+      mockLoadModelCatalog.mockResolvedValue([
+        { provider: "amazon-bedrock", id: "us.anthropic.claude-opus-4-6-v1:0" },
+      ]);
+
+      await runConfigCommand([
+        "config",
+        "set",
+        "agents.defaults.model.primary",
+        "amazon-bedrock/us.anthropic.claude-opus-4-6-v1:0",
+      ]);
+
+      expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts custom model IDs present in agents.defaults.models", async () => {
+      const resolved: OpenClawConfig = {
+        agents: {
+          defaults: {
+            models: {
+              "amazon-bedrock/us.anthropic.claude-opus-4-6-v1:0": {},
+            },
+          },
+        },
+      } as unknown as OpenClawConfig;
+      setSnapshot(resolved, resolved);
+      mockLoadModelCatalog.mockResolvedValue([]);
+
+      await runConfigCommand([
+        "config",
+        "set",
+        "agents.defaults.model.primary",
+        "amazon-bedrock/us.anthropic.claude-opus-4-6-v1:0",
+      ]);
+
+      expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
     });
   });
 
