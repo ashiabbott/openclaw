@@ -204,24 +204,28 @@ function exceedsEstimatedHtmlNestingDepth(html: string, maxDepth: number): boole
   return false;
 }
 
+export function extractBasicHtmlContent(params: {
+  html: string;
+  extractMode: ExtractMode;
+}): { text: string; title?: string } {
+  const rendered = htmlToMarkdown(params.html);
+  if (params.extractMode === "text") {
+    const text = markdownToText(rendered.text) || normalizeWhitespace(stripTags(params.html));
+    return { text, title: rendered.title };
+  }
+  return rendered;
+}
+
 export async function extractReadableContent(params: {
   html: string;
   url: string;
   extractMode: ExtractMode;
 }): Promise<{ text: string; title?: string } | null> {
-  const fallback = (): { text: string; title?: string } => {
-    const rendered = htmlToMarkdown(params.html);
-    if (params.extractMode === "text") {
-      const text = markdownToText(rendered.text) || normalizeWhitespace(stripTags(params.html));
-      return { text, title: rendered.title };
-    }
-    return rendered;
-  };
   if (
     params.html.length > READABILITY_MAX_HTML_CHARS ||
     exceedsEstimatedHtmlNestingDepth(params.html, READABILITY_MAX_ESTIMATED_NESTING_DEPTH)
   ) {
-    return fallback();
+    return null;
   }
   try {
     const { Readability, parseHTML } = await loadReadabilityDeps();
@@ -234,16 +238,16 @@ export async function extractReadableContent(params: {
     const reader = new Readability(document, { charThreshold: 0 });
     const parsed = reader.parse();
     if (!parsed?.content) {
-      return fallback();
+      return null;
     }
     const title = parsed.title || undefined;
     if (params.extractMode === "text") {
       const text = normalizeWhitespace(parsed.textContent ?? "");
-      return text ? { text, title } : fallback();
+      return text ? { text, title } : null;
     }
     const rendered = htmlToMarkdown(parsed.content);
-    return { text: rendered.text, title: title ?? rendered.title };
+    return rendered.text ? { text: rendered.text, title: title ?? rendered.title } : null;
   } catch {
-    return fallback();
+    return null;
   }
 }

@@ -253,11 +253,33 @@ describe("web_fetch extraction fallbacks", () => {
     expect(details.text).toContain("firecrawl content");
   });
 
-  it("throws when readability is disabled and firecrawl is unavailable", async () => {
+  it("uses firecrawl for title-only html shells instead of treating title text as readability success", async () => {
+    installMockFetch((input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url.includes("api.firecrawl.dev")) {
+        return Promise.resolve(firecrawlResponse("firecrawl rendered page")) as Promise<Response>;
+      }
+      return Promise.resolve(
+        htmlResponse(
+          "<!doctype html><html><head><title>Uniswap Interface</title></head><body><div id='root'></div></body></html>",
+          url,
+        ),
+      ) as Promise<Response>;
+    });
+
+    const tool = createFetchTool({ firecrawl: { apiKey: "firecrawl-test" } });
+
+    const result = await tool?.execute?.("call", { url: "https://app.uniswap.org" });
+    const details = result?.details as { extractor?: string; text?: string };
+    expect(details.extractor).toBe("firecrawl");
+    expect(details.text).toContain("firecrawl rendered page");
+  });
+
+  it("falls back to basic html extraction when readability is disabled and firecrawl is unavailable", async () => {
     installMockFetch(
       (input: RequestInfo | URL) =>
         Promise.resolve(
-          htmlResponse("<html><body>hi</body></html>", requestUrl(input)),
+          htmlResponse("<html><body><h1>hi</h1></body></html>", requestUrl(input)),
         ) as Promise<Response>,
     );
 
@@ -266,19 +288,20 @@ describe("web_fetch extraction fallbacks", () => {
       firecrawl: { enabled: false },
     });
 
-    await expect(
-      tool?.execute?.("call", { url: "https://example.com/readability-off" }),
-    ).rejects.toThrow("Readability disabled");
+    const result = await tool?.execute?.("call", { url: "https://example.com/readability-off" });
+    const details = result?.details as { extractor?: string; text?: string };
+    expect(details.extractor).toBe("html-basic");
+    expect(details.text).toContain("hi");
   });
 
-  it("throws when readability is empty and firecrawl fails", async () => {
+  it("falls back to basic html extraction when readability is empty and firecrawl fails", async () => {
     installMockFetch((input: RequestInfo | URL) => {
       const url = requestUrl(input);
       if (url.includes("api.firecrawl.dev")) {
         return Promise.resolve(firecrawlError()) as Promise<Response>;
       }
       return Promise.resolve(
-        htmlResponse("<!doctype html><html><head></head><body></body></html>", url),
+        htmlResponse("<!doctype html><html><head><title>Shell App</title></head><body></body></html>", url),
       ) as Promise<Response>;
     });
 
@@ -286,9 +309,10 @@ describe("web_fetch extraction fallbacks", () => {
       firecrawl: { apiKey: "firecrawl-test" },
     });
 
-    await expect(
-      tool?.execute?.("call", { url: "https://example.com/readability-empty" }),
-    ).rejects.toThrow("Readability and Firecrawl returned no content");
+    const result = await tool?.execute?.("call", { url: "https://example.com/readability-empty" });
+    const details = result?.details as { extractor?: string; text?: string };
+    expect(details.extractor).toBe("html-basic");
+    expect(details.text).toContain("Shell App");
   });
 
   it("uses firecrawl when direct fetch fails", async () => {

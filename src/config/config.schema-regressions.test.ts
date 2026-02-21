@@ -49,6 +49,20 @@ describe("config schema regressions", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("accepts web fetch maxResponseBytes", () => {
+    const res = validateConfigObject({
+      tools: {
+        web: {
+          fetch: {
+            maxResponseBytes: 500_000,
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+  });
+
   it("rejects unsafe iMessage remoteHost", () => {
     const res = validateConfigObject({
       channels: {

@@ -9,6 +9,7 @@ import { stringEnum } from "../schema/typebox.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 import {
+  extractBasicHtmlContent,
   extractReadableContent,
   htmlToMarkdown,
   markdownToText,
@@ -606,32 +607,29 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
         text = markdownToText(body);
       }
     } else if (contentType.includes("text/html")) {
-      if (params.readabilityEnabled) {
-        const readable = await extractReadableContent({
-          html: body,
-          url: finalUrl,
-          extractMode: params.extractMode,
-        });
-        if (readable?.text) {
-          text = readable.text;
-          title = readable.title;
-          extractor = "readability";
-        } else {
-          const firecrawl = await tryFirecrawlFallback({ ...params, url: finalUrl });
-          if (firecrawl) {
-            text = firecrawl.text;
-            title = firecrawl.title;
-            extractor = "firecrawl";
-          } else {
-            throw new Error(
-              "Web fetch extraction failed: Readability and Firecrawl returned no content.",
-            );
-          }
-        }
+      const readable = params.readabilityEnabled
+        ? await extractReadableContent({
+            html: body,
+            url: finalUrl,
+            extractMode: params.extractMode,
+          })
+        : null;
+      if (readable?.text) {
+        text = readable.text;
+        title = readable.title;
+        extractor = "readability";
       } else {
-        throw new Error(
-          "Web fetch extraction failed: Readability disabled and Firecrawl unavailable.",
-        );
+        const firecrawl = await tryFirecrawlFallback({ ...params, url: finalUrl });
+        if (firecrawl) {
+          text = firecrawl.text;
+          title = firecrawl.title;
+          extractor = "firecrawl";
+        } else {
+          const basic = extractBasicHtmlContent({ html: body, extractMode: params.extractMode });
+          text = basic.text;
+          title = basic.title;
+          extractor = "html-basic";
+        }
       }
     } else if (contentType.includes("application/json")) {
       try {
