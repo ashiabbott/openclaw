@@ -245,6 +245,10 @@ describe("hasLineDirectives", () => {
     expect(hasLineDirectives("[[device: TV | Room]]")).toBe(true);
   });
 
+  it("detects air_purifier directive", () => {
+    expect(hasLineDirectives("[[air_purifier: Bedroom Purifier | Good | Auto | 35%]]")).toBe(true);
+  });
+
   it("detects appletv_remote directive", () => {
     expect(hasLineDirectives("[[appletv_remote: Apple TV | Playing]]")).toBe(true);
   });
@@ -526,6 +530,33 @@ describe("parseLineDirectives", () => {
       const flexMessage = getLineData(result).flexMessage as { altText?: string };
       expect(flexMessage).toBeDefined();
       expect(flexMessage?.altText).toBe("📱 Speaker");
+    });
+  });
+
+  describe("air_purifier", () => {
+    it("parses air_purifier with explicit controls", () => {
+      const result = parseLineDirectives({
+        text: "[[air_purifier: Bedroom Purifier | Good | Auto | 35% | Power:toggle, Auto:auto, Turbo:turbo]]",
+      });
+
+      const flexMessage = getLineData(result).flexMessage as { altText?: string; contents?: { footer?: { contents?: unknown[] } } };
+      expect(flexMessage).toBeDefined();
+      expect(flexMessage?.altText).toContain("Bedroom Purifier");
+      expect(flexMessage?.altText).toContain("Air quality: Good");
+      const contents = flexMessage?.contents as { footer?: { contents?: unknown[] } };
+      expect(contents.footer?.contents?.length).toBeGreaterThan(0);
+    });
+
+    it("parses air_purifier with default controls", () => {
+      const result = parseLineDirectives({
+        text: "[[air_purifier: Office Purifier | Moderate | Sleep | 22%]]",
+      });
+
+      const flexMessage = getLineData(result).flexMessage as { altText?: string; contents?: { footer?: { contents?: unknown[] } } };
+      expect(flexMessage).toBeDefined();
+      expect(flexMessage?.altText).toContain("Office Purifier");
+      const footer = (flexMessage?.contents as { footer?: { contents?: unknown[] } })?.footer;
+      expect(footer?.contents?.length).toBe(2);
     });
   });
 

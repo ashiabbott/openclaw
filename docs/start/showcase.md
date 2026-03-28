@@ -212,7 +212,7 @@ Read, send, and archive messages via Beeper Desktop. Uses Beeper local MCP API s
 <Card title="Winix Air Purifier Control" icon="wind" href="https://x.com/antonplex/status/2010518442471006253">
   **@antonplex** • `automation` `hardware` `air-quality`
 
-Claude Code discovered and confirmed the purifier controls, then OpenClaw takes over to manage room air quality.
+Claude Code discovered and confirmed the purifier controls, then OpenClaw takes over to manage room air quality with a reusable `[[air_purifier: ...]]` card format for power, auto, turbo, and sleep actions.
 
   <img src="/assets/showcase/winix-air-purifier.jpg" alt="Winix air purifier control via OpenClaw" />
 </Card>

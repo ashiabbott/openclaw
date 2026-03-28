@@ -20,6 +20,7 @@ import type { ReplyPayload } from "../types.js";
  * - [[event: title | date | time | location | description]]
  * - [[agenda: title | event1_title:event1_time, event2_title:event2_time, ...]]
  * - [[device: name | type | status | ctrl1:data1, ctrl2:data2]]
+ * - [[air_purifier: name | air quality | mode | fan | power:toggle, auto:auto, turbo:turbo]]
  * - [[appletv_remote: name | status]]
  *
  * Returns the modified payload with directives removed from text and fields populated.
@@ -224,6 +225,87 @@ export function parseLineDirectives(payload: ReplyPayload): ReplyPayload {
     text = text.replace(eventMatch[0], "").trim();
   }
 
+  // Parse [[air_purifier: name | air quality | mode | fan | ctrl1:data1, ctrl2:data2]]
+  const airPurifierMatch = text.match(/\[\[air_purifier:\s*([^\]]+)\]\]/i);
+  if (airPurifierMatch && !lineData.flexMessage) {
+    const parts = airPurifierMatch[1].split("|").map((s) => s.trim());
+    if (parts.length >= 1) {
+      const [deviceName, airQuality, mode, fan, controlsStr] = parts;
+
+      const deviceKey = toSlug(deviceName || "air_purifier");
+      const statusParts = [
+        airQuality ? `Air quality: ${airQuality}` : undefined,
+        mode ? `Mode: ${mode}` : undefined,
+        fan ? `Fan: ${fan}` : undefined,
+      ].filter(Boolean);
+      const controls = controlsStr
+        ? controlsStr.split(",").map((ctrlStr, index) => {
+            const [label, data] = ctrlStr.split(":").map((s) => s.trim());
+            const action = data || label.toLowerCase().replace(/\s+/g, "_");
+            const normalizedAction = action.toLowerCase();
+            const style =
+              index === 0 || normalizedAction.includes("power") || normalizedAction === "toggle"
+                ? "primary"
+                : "secondary";
+            const icon = normalizedAction.includes("auto")
+              ? "AUTO"
+              : normalizedAction.includes("turbo")
+                ? "MAX"
+                : normalizedAction.includes("sleep")
+                  ? "SLEEP"
+                  : normalizedAction.includes("power") || normalizedAction === "toggle"
+                    ? "ON/OFF"
+                    : undefined;
+            return {
+              label,
+              icon,
+              style,
+              data: lineActionData(action, { "line.device": deviceKey, "line.deviceType": "air_purifier" }),
+            } as const;
+          })
+        : [
+            {
+              label: "Power",
+              icon: "ON/OFF",
+              style: "primary",
+              data: lineActionData("toggle", { "line.device": deviceKey, "line.deviceType": "air_purifier" }),
+            },
+            {
+              label: "Auto",
+              icon: "AUTO",
+              style: "secondary",
+              data: lineActionData("auto", { "line.device": deviceKey, "line.deviceType": "air_purifier" }),
+            },
+            {
+              label: "Turbo",
+              icon: "MAX",
+              style: "secondary",
+              data: lineActionData("turbo", { "line.device": deviceKey, "line.deviceType": "air_purifier" }),
+            },
+            {
+              label: "Sleep",
+              icon: "SLEEP",
+              style: "secondary",
+              data: lineActionData("sleep", { "line.device": deviceKey, "line.deviceType": "air_purifier" }),
+            },
+          ];
+
+      const card = createDeviceControlCard({
+        deviceName: deviceName || "Air Purifier",
+        deviceType: "Air Purifier",
+        status: statusParts.join(" • ") || undefined,
+        isOnline: true,
+        controls,
+      });
+
+      lineData.flexMessage = {
+        altText: `?? ${deviceName || "Air Purifier"}${statusParts.length ? `: ${statusParts.join(" • ")}` : ""}`,
+        contents: card,
+      };
+    }
+    text = text.replace(airPurifierMatch[0], "").trim();
+  }
+
   // Parse [[appletv_remote: name | status]]
   const appleTvMatch = text.match(/\[\[appletv_remote:\s*([^\]]+)\]\]/i);
   if (appleTvMatch && !lineData.flexMessage) {
@@ -336,7 +418,7 @@ export function parseLineDirectives(payload: ReplyPayload): ReplyPayload {
  * Check if text contains any LINE directives
  */
 export function hasLineDirectives(text: string): boolean {
-  return /\[\[(quick_replies|location|confirm|buttons|media_player|event|agenda|device|appletv_remote):/i.test(
+  return /\[\[(quick_replies|location|confirm|buttons|media_player|event|agenda|device|air_purifier|appletv_remote):/i.test(
     text,
   );
 }
