@@ -470,6 +470,48 @@ describe("createTelegramBot", () => {
     });
     expect(replySpy).toHaveBeenCalledTimes(1);
   });
+  it("does not drop valid updates when persisted offset is stale", async function () {
+    onSpy.mockReset();
+    replySpy.mockReset();
+    const onUpdateId = vi.fn();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: { dmPolicy: "open", allowFrom: ["*"] },
+      },
+    });
+
+    createTelegramBot({
+      token: "tok",
+      updateOffset: {
+        lastUpdateId: 999,
+        onUpdateId,
+      },
+    });
+    const handler = getOnHandler("message") as any;
+
+    await handler({
+      update: { update_id: 111 },
+      message: {
+        chat: { id: 123, type: "private" },
+        from: { id: 456, username: "testuser" },
+        text: "hello",
+        date: 1736380800,
+        message_id: 42,
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async function () {
+        return {
+          download: async function () {
+            return new Uint8Array();
+          },
+        };
+      },
+    });
+
+    expect(replySpy).toHaveBeenCalledTimes(1);
+    expect(onUpdateId).not.toHaveBeenCalled();
+  });
   it("allows distinct callback_query ids without update_id", async () => {
     onSpy.mockReset();
     replySpy.mockReset();

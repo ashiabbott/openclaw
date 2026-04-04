@@ -171,12 +171,9 @@ export function createTelegramBot(opts: TelegramBotOptions) {
   };
 
   const shouldSkipUpdate = (ctx: TelegramUpdateKeyContext) => {
-    const updateId = resolveTelegramUpdateId(ctx);
-    if (typeof updateId === "number" && lastUpdateId !== null) {
-      if (updateId <= lastUpdateId) {
-        return true;
-      }
-    }
+    // Keep dedupe process-local. Persisted offsets are bookkeeping only and
+    // may become stale across bot/account/token switches. Filtering by a stale
+    // offset would silently drop valid inbound updates.
     const key = buildTelegramUpdateKey(ctx);
     const skipped = recentUpdates.check(key);
     if (skipped && key && shouldLogVerbose()) {
